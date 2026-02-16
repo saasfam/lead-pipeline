@@ -1,0 +1,164 @@
+import { getVertical, getVerticalsByTier } from '../config/verticals.js';
+import { getCities } from '../config/cities.js';
+import { runScrapersForVertical } from '../scrapers/scraper-registry.js';
+import { resolveDomains } from '../enrichment/domain-resolver.js';
+import { batchPeopleSearch } from '../enrichment/apollo-people-search.js';
+import { verifyEmails } from '../enrichment/apollo-verify.js';
+import { dedupBusinesses, dedupContacts } from '../enrichment/dedup.js';
+import { generateInstantlyCSV } from '../export/instantly-csv.js';
+import { generatePhantomBusterCSV } from '../export/phantombuster-csv.js';
+import { uploadMultipleToGCS } from '../export/gcs-upload.js';
+import { createJob, completeJob, failJob, updateJob } from './job-tracker.js';
+import { notifySlack, formatPipelineComplete } from '../services/slack.js';
+import { logger } from '../services/logger.js';
+
+/**
+ * Run the full pipeline for a single vertical.
+ *
+ * Flow: scrape → dedup → resolve domains → Apollo people search → verify emails → export CSVs
+ *
+ * @param {string} verticalKey - Vertical key (e.g., "dental")
+ * @param {Array<string>|null} cityNames - Specific cities, or null for all 50
+ * @returns {object} - Job result with stats
+ */
+export async function runVerticalPipeline(verticalKey, cityNames = null) {
+  const vertical = getVertical(verticalKey);
+  if (!vertical) throw new Error(`Unknown vertical: ${verticalKey}`);
+
+  const cities = getCities(cityNames);
+  const job = createJob('vertical', { vertical: verticalKey, cities: cities.map((c) => c.name) });
+
+  logger.info('Pipeline started', { jobId: job.id, vertical: verticalKey, cities: cities.length });
+
+  try {
+    // Step 1: Scrape
+    logger.info('Step 1: Scraping businesses', { vertical: verticalKey });
+    const rawBusinesses = await runScrapersForVertical(vertical, verticalKey, cities);
+    job.stats.scraped = rawBusinesses.length;
+    updateJob(job.id, { stats: { ...job.stats } });
+
+    // Step 2: Dedup businesses
+    logger.info('Step 2: Deduplicating businesses');
+    const uniqueBusinesses = dedupBusinesses(rawBusinesses);
+
+    // Step 3: Resolve domains
+    logger.info('Step 3: Resolving domains');
+    const withDomains = await resolveDomains(uniqueBusinesses);
+    const businessesWithDomains = withDomains.filter((b) => b.domain);
+    logger.info('Businesses with domains', {
+      total: withDomains.length,
+      withDomain: businessesWithDomains.length,
+    });
+
+    // Step 4: Apollo people search
+    logger.info('Step 4: Apollo people search');
+    const contacts = await batchPeopleSearch(businessesWithDomains, vertical);
+    const uniqueContacts = dedupContacts(contacts);
+    job.stats.enriched = uniqueContacts.length;
+    updateJob(job.id, { stats: { ...job.stats } });
+
+    // Step 5: Verify emails
+    logger.info('Step 5: Verifying emails');
+    const verifiedContacts = await verifyEmails(uniqueContacts);
+    job.stats.verified = verifiedContacts.length;
+    updateJob(job.id, { stats: { ...job.stats } });
+
+    // Step 6: Export CSVs
+    logger.info('Step 6: Exporting CSVs');
+    // Merge city/state from business data into contacts
+    const domainToBiz = new Map();
+    for (const biz of withDomains) {
+      if (biz.domain && !domainToBiz.has(biz.domain)) {
+        domainToBiz.set(biz.domain, biz);
+      }
+    }
+    const enrichedContacts = verifiedContacts.map((c) => {
+      const biz = domainToBiz.get(c.companyDomain) || {};
+      return { ...c, city: biz.city || '', state: biz.state || '' };
+    });
+
+    const instantlyPath = generateInstantlyCSV(enrichedContacts, verticalKey);
+    const pbPath = generatePhantomBusterCSV(enrichedContacts, verticalKey);
+    job.stats.exported = enrichedContacts.length;
+
+    // Step 7: Upload to GCS
+    logger.info('Step 7: Uploading to GCS');
+    const outputFiles = [instantlyPath, pbPath].filter(Boolean);
+    let gcsUris = [];
+    try {
+      gcsUris = await uploadMultipleToGCS(outputFiles);
+    } catch (err) {
+      logger.warn('GCS upload failed, CSVs saved locally', { error: err.message });
+      gcsUris = outputFiles; // Fall back to local paths
+    }
+
+    // Step 8: Notify Slack
+    const blocks = formatPipelineComplete(job.id, vertical.label, job.stats);
+    await notifySlack(`Lead pipeline complete: ${vertical.label}`, blocks);
+
+    completeJob(job.id, job.stats, gcsUris);
+
+    logger.info('Pipeline complete', {
+      jobId: job.id,
+      vertical: verticalKey,
+      stats: job.stats,
+    });
+
+    return job;
+  } catch (err) {
+    logger.error('Pipeline failed', {
+      jobId: job.id,
+      vertical: verticalKey,
+      error: err.message,
+    });
+    failJob(job.id, err.message);
+    throw err;
+  }
+}
+
+/**
+ * Run the pipeline for all verticals in a tier.
+ *
+ * @param {number} tier - Tier number (1, 2, or 3)
+ * @param {Array<string>|null} cityNames - Specific cities, or null for all
+ * @returns {object} - Job result
+ */
+export async function runTierPipeline(tier, cityNames = null) {
+  const verticals = getVerticalsByTier(tier);
+  if (verticals.length === 0) throw new Error(`No verticals for tier ${tier}`);
+
+  const job = createJob('tier', { tier, verticals: verticals.map((v) => v.key) });
+
+  logger.info('Tier pipeline started', { jobId: job.id, tier, verticals: verticals.length });
+
+  const results = [];
+
+  for (const v of verticals) {
+    try {
+      const result = await runVerticalPipeline(v.key, cityNames);
+      results.push(result);
+    } catch (err) {
+      logger.error('Vertical pipeline failed in tier run', {
+        vertical: v.key,
+        error: err.message,
+      });
+      job.errors.push(`${v.key}: ${err.message}`);
+    }
+  }
+
+  // Aggregate stats
+  const totalStats = results.reduce(
+    (acc, r) => ({
+      scraped: acc.scraped + r.stats.scraped,
+      enriched: acc.enriched + r.stats.enriched,
+      verified: acc.verified + r.stats.verified,
+      exported: acc.exported + r.stats.exported,
+    }),
+    { scraped: 0, enriched: 0, verified: 0, exported: 0 }
+  );
+
+  completeJob(job.id, totalStats);
+  logger.info('Tier pipeline complete', { jobId: job.id, tier, stats: totalStats });
+
+  return job;
+}

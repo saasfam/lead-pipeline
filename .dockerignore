@@ -1,0 +1,6 @@
+node_modules
+output
+*.csv
+.env
+env-vars.yaml
+.git

@@ -97,7 +97,7 @@ function reclassifyVerticals(leads) {
       lead.companyIndustry || lead.industry || ''
     );
 
-    if (!isMismatch && !forceFlag) continue;
+    if (!isMismatch) continue;
 
     const result = reclassifyVertical(
       lead.companyIndustry || lead.industry || '',

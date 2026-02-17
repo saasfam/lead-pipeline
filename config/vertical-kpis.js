@@ -158,7 +158,7 @@ const TITLE_VERTICAL_BOOST = {
   dental: ['dental', 'dentist', 'orthodont', 'dds', 'dmd', 'endodont', 'periodont'],
   healthcare: ['physician', 'nurse', 'clinical', 'medical director', 'chief medical', 'patient'],
   logistics: ['dispatch', 'freight', 'logistics', 'fleet', 'supply chain', 'carrier'],
-  automotive: ['dealership', 'bdc', 'service advisor', 'general manager'],
+  automotive: ['dealership', 'bdc', 'service advisor', 'auto', 'vehicle'],
   recruiting: ['recruiter', 'talent acquisition', 'staffing', 'placement'],
   homeservices: ['hvac', 'plumbing', 'electrician', 'contractor', 'field service'],
   restaurants: ['chef', 'restaurant', 'food', 'dining', 'culinary'],

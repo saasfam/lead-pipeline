@@ -1,4 +1,4 @@
-import { getVertical, getVerticalsByTier } from '../config/verticals.js';
+import { getVertical, VERTICALS } from '../config/verticals.js';
 import { getCities } from '../config/cities.js';
 import { runScrapersForVertical } from '../scrapers/scraper-registry.js';
 import { resolveDomains } from '../enrichment/domain-resolver.js';
@@ -117,19 +117,17 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
 }
 
 /**
- * Run the pipeline for all verticals in a tier.
+ * Run the pipeline for all verticals.
  *
- * @param {number} tier - Tier number (1, 2, or 3)
  * @param {Array<string>|null} cityNames - Specific cities, or null for all
  * @returns {object} - Job result
  */
-export async function runTierPipeline(tier, cityNames = null) {
-  const verticals = getVerticalsByTier(tier);
-  if (verticals.length === 0) throw new Error(`No verticals for tier ${tier}`);
+export async function runAllVerticalsPipeline(cityNames = null) {
+  const verticals = Object.entries(VERTICALS).map(([key, v]) => ({ key, ...v }));
 
-  const job = createJob('tier', { tier, verticals: verticals.map((v) => v.key) });
+  const job = createJob('all', { verticals: verticals.map((v) => v.key) });
 
-  logger.info('Tier pipeline started', { jobId: job.id, tier, verticals: verticals.length });
+  logger.info('All-verticals pipeline started', { jobId: job.id, verticals: verticals.length });
 
   const results = [];
 
@@ -158,7 +156,7 @@ export async function runTierPipeline(tier, cityNames = null) {
   );
 
   completeJob(job.id, totalStats);
-  logger.info('Tier pipeline complete', { jobId: job.id, tier, stats: totalStats });
+  logger.info('All-verticals pipeline complete', { jobId: job.id, stats: totalStats });
 
   return job;
 }

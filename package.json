@@ -11,6 +11,7 @@
   "dependencies": {
     "@browserbasehq/sdk": "^2.0.0",
     "@google-cloud/storage": "^7.18.0",
+    "csv-parse": "^6.1.0",
     "csv-stringify": "^6.4.0",
     "express": "^4.19.2",
     "playwright-core": "^1.40.0",

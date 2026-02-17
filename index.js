@@ -1,5 +1,5 @@
 import express from 'express';
-import { runVerticalPipeline, runTierPipeline } from './pipeline/orchestrator.js';
+import { runVerticalPipeline, runAllVerticalsPipeline } from './pipeline/orchestrator.js';
 import { batchPeopleSearch } from './enrichment/apollo-people-search.js';
 import { getVertical } from './config/verticals.js';
 import { getJob, listJobs } from './pipeline/job-tracker.js';
@@ -58,23 +58,18 @@ app.post('/scrape-vertical', (req, res) => {
   });
 });
 
-// Scrape all verticals in a tier
-app.post('/scrape-tier', (req, res) => {
-  const { tier, cities } = req.body;
+// Scrape all verticals
+app.post('/scrape-all', (req, res) => {
+  const { cities } = req.body;
 
-  if (!tier || ![1, 2, 3].includes(tier)) {
-    return res.status(400).json({ error: 'tier must be 1, 2, or 3' });
-  }
-
-  runTierPipeline(tier, cities || null).catch((err) => {
-    logger.error('Background tier pipeline failed', {
-      tier,
+  runAllVerticalsPipeline(cities || null).catch((err) => {
+    logger.error('Background all-verticals pipeline failed', {
       error: err.message,
     });
   });
 
   res.status(202).json({
-    message: `Pipeline started for tier ${tier}`,
+    message: 'Pipeline started for all 22 verticals',
     note: 'Use GET /jobs to check progress.',
   });
 });

@@ -120,3 +120,144 @@ export const VERTICAL_KPIS = {
 export function getVerticalKpis(key) {
   return VERTICAL_KPIS[key] || null;
 }
+
+/**
+ * Maps vertical keys to Apollo industry substrings.
+ * Used to detect when a lead's assigned vertical doesn't match their actual industry.
+ */
+export const VERTICAL_INDUSTRY_MAP = {
+  contactcenter: ['call center', 'contact center', 'customer service', 'bpo', 'outsourc'],
+  dental: ['dental', 'dentist', 'orthodont'],
+  automotive: ['automotive', 'auto dealer', 'car dealer', 'vehicle'],
+  logistics: ['logistics', 'freight', 'trucking', 'shipping', 'supply chain', 'transportation'],
+  propertymanagement: ['property management', 'real estate management', 'apartment', 'residential management'],
+  realestate: ['real estate', 'realty', 'brokerage', 'commercial real estate'],
+  healthcare: ['healthcare', 'health care', 'medical', 'hospital', 'clinic', 'physician', 'nursing', 'therapy', 'pharma'],
+  recruiting: ['staffing', 'recruiting', 'recruitment', 'talent', 'human resources', 'hr '],
+  homeservices: ['home service', 'hvac', 'plumbing', 'electrical', 'roofing', 'landscap', 'pest control'],
+  restaurants: ['restaurant', 'food service', 'dining', 'hospitality', 'catering'],
+  agencies: ['marketing agency', 'advertising', 'digital agency', 'creative agency', 'media agency'],
+  msp: ['managed service', 'msp', 'it services', 'it consulting', 'managed it'],
+  saas: ['saas', 'software as a service', 'cloud software'],
+  technology: ['technology', 'software', 'information technology', 'it ', 'tech'],
+  ecommerce: ['e-commerce', 'ecommerce', 'online retail', 'direct-to-consumer', 'dtc'],
+  communications: ['telecommunications', 'telecom', 'communications', 'wireless', 'broadband'],
+  financial: ['financial', 'finance', 'banking', 'investment', 'wealth management', 'accounting'],
+  education: ['education', 'university', 'college', 'school', 'academic', 'e-learning'],
+  energy: ['energy', 'utilities', 'oil', 'gas', 'solar', 'renewable', 'electric utility'],
+  insurance: ['insurance', 'underwriting', 'claims', 'actuarial'],
+  travel: ['travel', 'hotel', 'hospitality', 'tourism', 'resort', 'airline'],
+  retail: ['retail', 'store', 'consumer goods', 'brick-and-mortar', 'department store'],
+};
+
+/**
+ * Title keywords that strongly signal a specific vertical.
+ * Used as a boost during reclassification.
+ */
+const TITLE_VERTICAL_BOOST = {
+  dental: ['dental', 'dentist', 'orthodont', 'dds', 'dmd', 'endodont', 'periodont'],
+  healthcare: ['physician', 'nurse', 'clinical', 'medical director', 'chief medical', 'patient'],
+  logistics: ['dispatch', 'freight', 'logistics', 'fleet', 'supply chain', 'carrier'],
+  automotive: ['dealership', 'bdc', 'service advisor', 'general manager'],
+  recruiting: ['recruiter', 'talent acquisition', 'staffing', 'placement'],
+  homeservices: ['hvac', 'plumbing', 'electrician', 'contractor', 'field service'],
+  restaurants: ['chef', 'restaurant', 'food', 'dining', 'culinary'],
+  insurance: ['underwriter', 'actuary', 'insurance', 'claims adjuster', 'broker'],
+  realestate: ['realtor', 'real estate', 'broker', 'property'],
+  propertymanagement: ['property manager', 'leasing', 'maintenance director'],
+  education: ['dean', 'provost', 'enrollment', 'registrar', 'admissions'],
+  financial: ['advisor', 'wealth', 'portfolio', 'compliance officer', 'cfo'],
+};
+
+/**
+ * Dental-specific terms that should NEVER map to generic healthcare.
+ */
+const DENTAL_OVERRIDE_TERMS = ['dental', 'dentist', 'orthodont', 'endodont', 'periodont', 'dds', 'dmd', 'oral surgery'];
+
+/**
+ * Reclassify a lead's vertical based on Apollo industry fields and title.
+ *
+ * @param {string} companyIndustry    - Apollo companyIndustry
+ * @param {string} companySubIndustry - Apollo companySubIndustry
+ * @param {string} companyDescription - Apollo company description
+ * @param {string} title              - Contact's job title
+ * @returns {{ verticalKey: string, verticalLabel: string, confidence: 'high'|'medium'|'none' }}
+ */
+export function reclassifyVertical(companyIndustry, companySubIndustry, companyDescription, title) {
+  const blob = [companyIndustry, companySubIndustry, companyDescription].filter(Boolean).join(' ').toLowerCase();
+  const titleLower = (title || '').toLowerCase();
+
+  // Hard override: dental terms → always dental, never healthcare
+  const isDental = DENTAL_OVERRIDE_TERMS.some((t) => blob.includes(t) || titleLower.includes(t));
+  if (isDental) {
+    return { verticalKey: 'dental', verticalLabel: 'Dental', confidence: 'high' };
+  }
+
+  // Score each vertical by keyword matches in the industry blob
+  const scores = {};
+  for (const [vertical, keywords] of Object.entries(VERTICAL_INDUSTRY_MAP)) {
+    let score = 0;
+    for (const kw of keywords) {
+      if (blob.includes(kw)) score += 1;
+    }
+    // Title boost
+    const titleKeywords = TITLE_VERTICAL_BOOST[vertical];
+    if (titleKeywords) {
+      for (const tkw of titleKeywords) {
+        if (titleLower.includes(tkw)) score += 2; // title match is stronger signal
+      }
+    }
+    if (score > 0) scores[vertical] = score;
+  }
+
+  // If healthcare scored but dental didn't explicitly win, make sure dental terms
+  // in the blob don't leak into healthcare (already handled above, but belt-and-suspenders)
+  if (scores.healthcare && !isDental) {
+    // Remove healthcare score if dental terms are present
+    const hasDentalTerms = DENTAL_OVERRIDE_TERMS.some((t) => blob.includes(t));
+    if (hasDentalTerms) {
+      delete scores.healthcare;
+      scores.dental = (scores.dental || 0) + 3;
+    }
+  }
+
+  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    return { verticalKey: '', verticalLabel: '', confidence: 'none' };
+  }
+
+  const [bestKey, bestScore] = entries[0];
+  // Build a human-readable label from the key
+  const labelMap = {
+    contactcenter: 'Contact Center',
+    dental: 'Dental',
+    automotive: 'Automotive',
+    logistics: 'Logistics',
+    propertymanagement: 'Property Management',
+    realestate: 'Real Estate',
+    healthcare: 'Healthcare',
+    recruiting: 'Recruiting',
+    homeservices: 'Home Services',
+    restaurants: 'Restaurants',
+    agencies: 'Agencies',
+    msp: 'MSP',
+    saas: 'SaaS',
+    technology: 'Technology',
+    ecommerce: 'E-Commerce',
+    communications: 'Communications',
+    financial: 'Financial Services',
+    education: 'Education',
+    energy: 'Energy',
+    insurance: 'Insurance',
+    travel: 'Travel & Hospitality',
+    retail: 'Retail',
+  };
+
+  const confidence = bestScore >= 3 ? 'high' : bestScore >= 1 ? 'medium' : 'none';
+
+  return {
+    verticalKey: bestKey,
+    verticalLabel: labelMap[bestKey] || bestKey,
+    confidence,
+  };
+}

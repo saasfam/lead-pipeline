@@ -45,21 +45,23 @@ async function instantlyFetch(path, options = {}) {
 }
 
 /**
- * Add leads to a campaign.
- * POST /leads — max 500 leads per request.
+ * Create a single lead in a campaign.
+ * POST /leads — v2 API accepts one lead per request.
  *
  * @param {string} campaignId - Campaign UUID
- * @param {Array<object>} leads - Lead objects with email, first_name, etc.
- * @param {object} options - Additional options
+ * @param {object} lead - Lead object with email, first_name, last_name, company_name, custom_variables
  * @returns {object} - API response
  */
-export async function addLeadsToCampaign(campaignId, leads, options = {}) {
+export async function createLead(campaignId, lead) {
   return instantlyFetch('/leads', {
     method: 'POST',
     body: JSON.stringify({
+      email: lead.email,
       campaign_id: campaignId,
-      leads,
-      skip_if_in_campaign: options.skipIfInCampaign ?? true,
+      first_name: lead.first_name || '',
+      last_name: lead.last_name || '',
+      company_name: lead.company_name || '',
+      custom_variables: lead.custom_variables || {},
     }),
   });
 }

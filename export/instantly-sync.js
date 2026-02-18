@@ -1,11 +1,10 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { addLeadsToCampaign, listCampaigns, getCampaignById, isConfigured } from '../services/instantly.js';
+import { createLead, listCampaigns, getCampaignById, isConfigured } from '../services/instantly.js';
 import { logger } from '../services/logger.js';
-
-const BATCH_SIZE = 500;
 
 /**
  * Sync leads to Instantly campaign via API.
+ * Uploads leads individually (v2 API requires one lead per POST).
  *
  * @param {Array<object>} leads - Enriched leads (from Phase 5 output)
  * @param {object} options
@@ -16,7 +15,7 @@ const BATCH_SIZE = 500;
 export async function syncLeadsToInstantly(leads, options = {}) {
   if (!isConfigured()) {
     logger.info('INSTANTLY_API_KEY not set, skipping Instantly upload');
-    return { uploaded: 0, skipped: 0, cached: 0, failed: 0, campaignId: null, campaignName: null, failedBatches: [] };
+    return { uploaded: 0, skipped: 0, cached: 0, failed: 0, campaignId: null, campaignName: null, errors: [] };
   }
 
   // Filter to ready-only leads
@@ -31,7 +30,7 @@ export async function syncLeadsToInstantly(leads, options = {}) {
 
   if (readyLeads.length === 0) {
     logger.info('No ready leads to upload');
-    return { uploaded: 0, skipped, cached: 0, failed: 0, campaignId: null, campaignName: null, failedBatches: [] };
+    return { uploaded: 0, skipped, cached: 0, failed: 0, campaignId: null, campaignName: null, errors: [] };
   }
 
   // Resolve campaign
@@ -70,40 +69,38 @@ export async function syncLeadsToInstantly(leads, options = {}) {
 
   logger.info('Leads after cache filter', { toUpload: toUpload.length, cached });
 
-  // Batch upload
+  // Upload leads individually (v2 API: one POST per lead)
   let uploaded = 0;
   let failed = 0;
-  const failedBatches = [];
+  const errors = [];
 
-  for (let i = 0; i < toUpload.length; i += BATCH_SIZE) {
-    const batch = toUpload.slice(i, i + BATCH_SIZE);
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(toUpload.length / BATCH_SIZE);
-
-    const instantlyLeads = batch.map(mapLeadToInstantly);
+  for (let i = 0; i < toUpload.length; i++) {
+    const lead = toUpload[i];
+    const instantlyLead = mapLeadToInstantly(lead);
 
     try {
-      await addLeadsToCampaign(campaignId, instantlyLeads);
+      await createLead(campaignId, instantlyLead);
 
-      // Mark as cached
-      for (const lead of batch) {
-        uploadCache[lead.email] = { uploadedAt: new Date().toISOString(), campaignId };
+      uploadCache[lead.email] = { uploadedAt: new Date().toISOString(), campaignId };
+      uploaded++;
+
+      if ((uploaded % 10 === 0) || uploaded === toUpload.length) {
+        logger.info('Upload progress', { uploaded, total: toUpload.length, failed });
       }
-      uploaded += batch.length;
-
-      logger.info('Batch uploaded', { batch: batchNum, total: totalBatches, leads: batch.length });
     } catch (err) {
-      failed += batch.length;
-      failedBatches.push({ batch: batchNum, count: batch.length, error: err.message });
-      logger.error('Batch upload failed', { batch: batchNum, error: err.message });
-      // Continue to next batch — failures don't block subsequent batches
+      failed++;
+      errors.push({ email: lead.email, error: err.message });
+      logger.error('Lead upload failed', { email: lead.email, error: err.message });
+      // Continue — individual failures don't block others
     }
 
-    // Save cache after each batch
-    writeFileSync(cacheFile, JSON.stringify(uploadCache, null, 2));
+    // Save cache every 25 leads
+    if ((i + 1) % 25 === 0 || i === toUpload.length - 1) {
+      writeFileSync(cacheFile, JSON.stringify(uploadCache, null, 2));
+    }
   }
 
-  const result = { uploaded, skipped, cached, failed, campaignId, campaignName, failedBatches };
+  const result = { uploaded, skipped, cached, failed, campaignId, campaignName, errors };
 
   logger.info('Instantly sync complete', result);
   return result;

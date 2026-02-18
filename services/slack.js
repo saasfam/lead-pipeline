@@ -70,14 +70,14 @@ export function formatInstantlyUpload(uploadResult, capacityReport = null) {
     },
   ];
 
-  if (uploadResult.failedBatches.length > 0) {
-    const errors = uploadResult.failedBatches
-      .slice(0, 3)
-      .map((b) => `Batch ${b.batch}: ${b.error}`)
+  if (uploadResult.errors && uploadResult.errors.length > 0) {
+    const errorLines = uploadResult.errors
+      .slice(0, 5)
+      .map((e) => `${e.email}: ${e.error}`)
       .join('\n');
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Upload Errors:*\n${errors}` },
+      text: { type: 'mrkdwn', text: `*Upload Errors:*\n${errorLines}` },
     });
   }
 

@@ -816,9 +816,9 @@ async function main() {
       console.log(`    Cached:     ${result.cached}`);
       console.log(`    Skipped:    ${result.skipped} (not ready)`);
       console.log(`    Failed:     ${result.failed}`);
-      if (result.failedBatches.length > 0) {
-        for (const b of result.failedBatches) {
-          console.log(`    Batch ${b.batch} error: ${b.error}`);
+      if (result.errors && result.errors.length > 0) {
+        for (const e of result.errors) {
+          console.log(`    Error: ${e.email} — ${e.error}`);
         }
       }
       console.log('='.repeat(60));

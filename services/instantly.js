@@ -57,7 +57,7 @@ export async function createLead(campaignId, lead) {
     method: 'POST',
     body: JSON.stringify({
       email: lead.email,
-      campaign_id: campaignId,
+      campaign: campaignId,
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       company_name: lead.company_name || '',

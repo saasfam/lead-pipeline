@@ -16,6 +16,9 @@ const INSTANTLY_COLUMNS = [
   'linkedin_url',
   'personalized_hook',
   'personalized_message',
+  'sequence_step_2',
+  'sequence_step_3',
+  'sequence_step_4',
 ];
 
 /**
@@ -43,6 +46,9 @@ export function generateInstantlyCSV(contacts, vertical, outputDir = './output')
     linkedin_url: c.linkedinUrl || '',
     personalized_hook: c.personalizedHook || '',
     personalized_message: c.personalizedMessage || '',
+    sequence_step_2: c.sequenceStep2 || '',
+    sequence_step_3: c.sequenceStep3 || '',
+    sequence_step_4: c.sequenceStep4 || '',
   }));
 
   const csv = stringify(rows, {

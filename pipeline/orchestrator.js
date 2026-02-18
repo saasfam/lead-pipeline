@@ -8,8 +8,11 @@ import { dedupBusinesses, dedupContacts } from '../enrichment/dedup.js';
 import { generateInstantlyCSV } from '../export/instantly-csv.js';
 import { generatePhantomBusterCSV } from '../export/phantombuster-csv.js';
 import { uploadMultipleToGCS } from '../export/gcs-upload.js';
+import { syncLeadsToInstantly } from '../export/instantly-sync.js';
+import { isConfigured as instantlyConfigured } from '../services/instantly.js';
+import { checkCapacity } from '../services/instantly-capacity.js';
 import { createJob, completeJob, failJob, updateJob } from './job-tracker.js';
-import { notifySlack, formatPipelineComplete } from '../services/slack.js';
+import { notifySlack, formatPipelineComplete, formatInstantlyUpload } from '../services/slack.js';
 import { logger } from '../services/logger.js';
 
 /**
@@ -92,8 +95,41 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
       gcsUris = outputFiles; // Fall back to local paths
     }
 
-    // Step 8: Notify Slack
+    // Step 8: Upload to Instantly (non-blocking)
+    let instantlyResult = null;
+    let capacityReport = null;
+    if (instantlyConfigured()) {
+      try {
+        // Capacity check (warning only)
+        try {
+          capacityReport = await checkCapacity();
+          if (!capacityReport.isCapacitySufficient) {
+            logger.warn('Instantly capacity insufficient', {
+              dailyCapacity: capacityReport.dailyCapacity,
+              deficit: capacityReport.deficit,
+            });
+          }
+        } catch (err) {
+          logger.warn('Instantly capacity check failed', { error: err.message });
+        }
+
+        // Upload leads
+        instantlyResult = await syncLeadsToInstantly(enrichedContacts);
+        job.stats.instantlyUploaded = instantlyResult.uploaded;
+        job.stats.instantlyCached = instantlyResult.cached;
+        job.stats.instantlyFailed = instantlyResult.failed;
+        updateJob(job.id, { stats: { ...job.stats } });
+      } catch (err) {
+        logger.warn('Instantly upload failed, CSVs still available', { error: err.message });
+      }
+    }
+
+    // Step 9: Notify Slack
     const blocks = formatPipelineComplete(job.id, vertical.label, job.stats);
+    if (instantlyResult) {
+      blocks.push({ type: 'divider' });
+      blocks.push(...formatInstantlyUpload(instantlyResult, capacityReport));
+    }
     await notifySlack(`Lead pipeline complete: ${vertical.label}`, blocks);
 
     completeJob(job.id, job.stats, gcsUris);

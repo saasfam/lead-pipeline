@@ -44,3 +44,55 @@ export function formatPipelineComplete(jobId, vertical, stats) {
     },
   ];
 }
+
+/**
+ * Format Instantly upload results + optional capacity warning as Slack Block Kit blocks.
+ *
+ * @param {object} uploadResult - From syncLeadsToInstantly()
+ * @param {object|null} capacityReport - From checkCapacity() (optional)
+ * @returns {Array<object>} - Slack blocks
+ */
+export function formatInstantlyUpload(uploadResult, capacityReport = null) {
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: 'Instantly Lead Upload' },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Campaign:*\n${uploadResult.campaignName || 'N/A'}` },
+        { type: 'mrkdwn', text: `*Uploaded:*\n${uploadResult.uploaded}` },
+        { type: 'mrkdwn', text: `*Cached (skipped):*\n${uploadResult.cached}` },
+        { type: 'mrkdwn', text: `*Not ready (filtered):*\n${uploadResult.skipped}` },
+        { type: 'mrkdwn', text: `*Failed:*\n${uploadResult.failed}` },
+      ],
+    },
+  ];
+
+  if (uploadResult.failedBatches.length > 0) {
+    const errors = uploadResult.failedBatches
+      .slice(0, 3)
+      .map((b) => `Batch ${b.batch}: ${b.error}`)
+      .join('\n');
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Upload Errors:*\n${errors}` },
+    });
+  }
+
+  if (capacityReport && !capacityReport.isCapacitySufficient) {
+    blocks.push(
+      { type: 'divider' },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:warning: *Capacity Warning:* ${capacityReport.recommendation}\nWarmed: ${capacityReport.warmedAccounts} | Daily capacity: ${capacityReport.dailyCapacity}/day | Deficit: ${capacityReport.deficit}/day`,
+        },
+      }
+    );
+  }
+
+  return blocks;
+}

@@ -324,3 +324,228 @@ export async function generatePersonalizedMessage(contact, signals, variety) {
     return { message: '', flags: ['api-error'], messageStructure: variety.structure.id };
   }
 }
+
+// ── Sequence generation (4-step value ladder) ────────────────────────────────
+
+// Step-specific char limits: { soft, hard }
+const STEP_CHAR_LIMITS = {
+  2: { soft: 300, hard: 400 },
+  3: { soft: 300, hard: 400 },
+  4: { soft: 200, hard: 250 },
+};
+
+/**
+ * Build system prompt for 4-step sequence generation with JSON output.
+ */
+function buildSequenceSystemPrompt(variety) {
+  const base = `You are writing a 4-step cold email sequence for an SDR at Anyreach, an AI-powered voice agent platform.
+
+ABSOLUTE RULES (apply to ALL steps):
+- Do NOT start any sentence with "I noticed" or "I came across" or "I saw that"
+- Do NOT use markdown — no **bold**, no *italics*, no bullet points, no numbered lists
+- Do NOT include subject lines, greetings (Hi/Hey Name), or sign-offs (Best, Cheers, etc.) in ANY step
+- Do NOT use filler phrases: "no doubt", "in today's competitive", "ever-evolving", "cutting-edge", "game-changer", "leverage", "synergy", "revolutionize", "transform the way"
+- Plain text only for every step
+
+OUTPUT FORMAT: Return valid JSON with exactly these keys: "step_1", "step_2", "step_3", "step_4"
+Each value is the plain-text email body for that step. No extra keys.`;
+
+  let step1Instructions;
+  if (variety.structure.id === 1) {
+    step1Instructions = `STEP 1 — Initial outreach (Hook → Pain → Solution → CTA):
+- Open with a ${variety.openerType} opener (see user instructions)
+- Identify a specific pain point for their role/industry
+- Present Anyreach's solution tied to a measurable outcome
+- End with the EXACT CTA provided in user instructions
+${variety.mentionBrand ? '- Mention "Anyreach" by name once.' : '- Do NOT mention "Anyreach" by name — describe the solution generically (e.g., "we built an AI voice agent that...")'}
+- You MUST mention the company name at least once
+- Target: ${variety.targetChars.min}-${variety.targetChars.max} characters`;
+  } else if (variety.structure.id === 2) {
+    step1Instructions = `STEP 1 — Initial outreach (Pain → Proof point → Offer → CTA):
+- Lead with the industry problem — specific to their vertical
+- Cite one specific result or proof point (stat, percentage, outcome)
+- Brief offer to share more
+- End with the EXACT CTA provided in user instructions
+${variety.mentionBrand ? '- Mention "Anyreach" by name once.' : '- Do NOT mention "Anyreach" by name — describe the solution generically.'}
+- You MUST mention the company name at least once
+- Target: ${variety.targetChars.min}-${variety.targetChars.max} characters`;
+  } else {
+    step1Instructions = `STEP 1 — Initial outreach (Observation + Question, 2-3 sentences ONLY):
+- Reference one specific thing about their company
+- End with a question about their challenge — genuinely curious tone
+- NO product pitch, NO statistics, NO features
+${variety.mentionBrand ? '' : '- Do NOT mention "Anyreach" at all.'}
+- You MUST mention the company name at least once
+- Target: ${variety.targetChars.min}-${variety.targetChars.max} characters`;
+  }
+
+  return `${base}
+
+${step1Instructions}
+
+STEP 2 — Value-add follow-up (sent ~3 days after step 1):
+- Assume they saw step 1 but didn't reply. Do NOT repeat step 1 content.
+- Share a specific result, stat, or social proof relevant to their vertical.
+- Use the industry KPI data / Anyreach value props as source material.
+- 2-3 sentences. Target: 150-300 characters.
+- End with a low-commitment CTA different from step 1's CTA.
+
+STEP 3 — Case study / credibility (sent ~5 days after step 2):
+- Brief reference to a result for a similar company in their vertical.
+- Pattern: "A [vertical] company achieved [specific metric]" — adapt naturally.
+- 2-3 sentences. Target: 150-300 characters.
+- Different CTA from step 1 and step 2.
+
+STEP 4 — Breakup (sent ~7 days after step 3):
+- Ultra-short. 1-2 sentences max. Target: 80-200 characters.
+- Tone: respectful close-the-loop. "Last note on this" energy.
+- Leave the door open without being pushy.
+- No product pitch, no stats, no features.`;
+}
+
+/**
+ * Post-process a follow-up sequence step with step-specific char limits.
+ * Reuses core postProcessMessage logic but relaxes company name check for steps 2-4.
+ */
+function postProcessSequenceStep(text, stepNum, contact) {
+  if (!text) return { cleaned: '', flags: [`step${stepNum}:empty`] };
+
+  // Run core post-processing (strips markdown, banned phrases, greetings, etc.)
+  const { cleaned: base, flags: baseFlags } = postProcessMessage(text, null);
+
+  // Prefix flags with step number
+  const flags = baseFlags
+    .filter((f) => f !== 'no-company-name') // Don't require company name in follow-ups
+    .map((f) => `step${stepNum}:${f}`);
+
+  let cleaned = base;
+
+  // Apply step-specific char limits
+  const limits = STEP_CHAR_LIMITS[stepNum];
+  if (limits && cleaned.length > limits.hard) {
+    const truncated = cleaned.slice(0, limits.hard);
+    const lastPeriod = truncated.lastIndexOf('.');
+    const lastQuestion = truncated.lastIndexOf('?');
+    const cutPoint = Math.max(lastPeriod, lastQuestion);
+    cleaned = cutPoint > limits.hard * 0.5
+      ? truncated.slice(0, cutPoint + 1)
+      : truncated.slice(0, limits.hard - 3) + '...';
+  }
+
+  if (limits && cleaned.length > limits.soft) {
+    flags.push(`step${stepNum}:over-${limits.soft}-chars`);
+  }
+
+  return { cleaned, flags };
+}
+
+/**
+ * Generate a 4-step cold email sequence using a single GPT-4o-mini call.
+ *
+ * @param {object} contact - Contact fields
+ * @param {object} signals - Company signals
+ * @param {object} variety - From assignVariety()
+ * @returns {{ message: string, sequenceStep2: string, sequenceStep3: string, sequenceStep4: string, flags: string[], messageStructure: number }}
+ */
+export async function generateSequence(contact, signals, variety) {
+  await openaiLimiter.acquire();
+
+  const emptyResult = {
+    message: '',
+    sequenceStep2: '',
+    sequenceStep3: '',
+    sequenceStep4: '',
+    flags: ['missing-api-key'],
+    messageStructure: variety?.structure?.id || 0,
+  };
+
+  if (!process.env.OPENAI_API_KEY) {
+    logger.error('OPENAI_API_KEY not set');
+    return emptyResult;
+  }
+
+  const systemPrompt = buildSequenceSystemPrompt(variety);
+  const baseUserPrompt = buildUserPrompt(contact, signals, variety);
+  // Override the "Write the message now." ending to request all 4 steps as JSON
+  const userPrompt = baseUserPrompt.replace(
+    /Write the message now\.$/,
+    'Write all 4 sequence steps as JSON now: {"step_1": "...", "step_2": "...", "step_3": "...", "step_4": "..."}'
+  );
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: 1200,
+      temperature: 0.8,
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() || '';
+
+    // Parse JSON response
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // JSON parse failed — fall back to treating entire response as step 1
+      logger.warn('Sequence JSON parse failed, falling back to single message', {
+        contact: contact.companyName,
+        rawLength: raw.length,
+      });
+      const { cleaned, flags } = postProcessMessage(raw, contact);
+      flags.push('sequence-parse-error');
+      return {
+        message: cleaned,
+        sequenceStep2: '',
+        sequenceStep3: '',
+        sequenceStep4: '',
+        flags,
+        messageStructure: variety.structure.id,
+      };
+    }
+
+    // Process each step
+    const step1Result = postProcessMessage(parsed.step_1 || '', contact);
+    const step2Result = postProcessSequenceStep(parsed.step_2 || '', 2, contact);
+    const step3Result = postProcessSequenceStep(parsed.step_3 || '', 3, contact);
+    const step4Result = postProcessSequenceStep(parsed.step_4 || '', 4, contact);
+
+    // Combine flags: step 1 flags unprefixed, steps 2-4 prefixed
+    const allFlags = [
+      ...step1Result.flags,
+      ...step2Result.flags,
+      ...step3Result.flags,
+      ...step4Result.flags,
+    ];
+
+    logger.info('Sequence generated (GPT-4o-mini)', {
+      contact: `${contact.firstName} ${contact.lastName}`,
+      company: contact.companyName,
+      step1Chars: step1Result.cleaned.length,
+      step2Chars: step2Result.cleaned.length,
+      step3Chars: step3Result.cleaned.length,
+      step4Chars: step4Result.cleaned.length,
+      structure: variety.structure.name,
+      flags: allFlags.length ? allFlags.join(',') : 'clean',
+    });
+
+    return {
+      message: step1Result.cleaned,
+      sequenceStep2: step2Result.cleaned,
+      sequenceStep3: step3Result.cleaned,
+      sequenceStep4: step4Result.cleaned,
+      flags: allFlags,
+      messageStructure: variety.structure.id,
+    };
+  } catch (err) {
+    logger.error('OpenAI sequence generation error', {
+      contact: `${contact.firstName} ${contact.lastName}`,
+      error: err.message,
+    });
+    return { ...emptyResult, flags: ['api-error'] };
+  }
+}

@@ -38,3 +38,4 @@ export class RateLimiter {
 // Shared rate limiters
 export const apolloLimiter = new RateLimiter(40, 60_000); // 40 req/min
 export const browserbaseLimiter = new RateLimiter(5, 1_000); // 5 concurrent sessions
+export const instantlyLimiter = new RateLimiter(10, 1_000); // 10 req/sec

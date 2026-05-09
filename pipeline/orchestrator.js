@@ -5,6 +5,7 @@ import { resolveDomains } from '../enrichment/domain-resolver.js';
 import { batchPeopleSearch } from '../enrichment/apollo-people-search.js';
 import { verifyEmails } from '../enrichment/apollo-verify.js';
 import { dedupBusinesses, dedupContacts } from '../enrichment/dedup.js';
+import { filterCrossVertical } from '../enrichment/cross-vertical-dedup.js';
 import { generateInstantlyCSV } from '../export/instantly-csv.js';
 import { generatePhantomBusterCSV } from '../export/phantombuster-csv.js';
 import { uploadMultipleToGCS } from '../export/gcs-upload.js';
@@ -40,16 +41,33 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     job.stats.scraped = rawBusinesses.length;
     updateJob(job.id, { stats: { ...job.stats } });
 
-    // Step 2: Dedup businesses
+    // Step 2: Dedup businesses (within this vertical's scrape)
     logger.info('Step 2: Deduplicating businesses');
     const uniqueBusinesses = dedupBusinesses(rawBusinesses);
 
+    // Step 2b: Cross-vertical dedup by normalized name (cheap, before
+    // we spend domain-resolution API calls on already-claimed businesses).
+    logger.info('Step 2b: Cross-vertical dedup (name)');
+    const nameFilter = filterCrossVertical(uniqueBusinesses, verticalKey);
+    job.stats.crossVerticalDupesByName = nameFilter.duplicates.length;
+    updateJob(job.id, { stats: { ...job.stats } });
+
     // Step 3: Resolve domains
     logger.info('Step 3: Resolving domains');
-    const withDomains = await resolveDomains(uniqueBusinesses);
-    const businessesWithDomains = withDomains.filter((b) => b.domain);
+    const withDomains = await resolveDomains(nameFilter.fresh);
+
+    // Step 3b: Cross-vertical dedup by domain — catches dupes that had
+    // different name spellings across directories. The first pass already
+    // recorded name-keyed entries, but a domain-keyed entry is a stronger
+    // claim, so we re-check post-domain.
+    logger.info('Step 3b: Cross-vertical dedup (domain)');
+    const domainFilter = filterCrossVertical(withDomains, verticalKey);
+    job.stats.crossVerticalDupesByDomain = domainFilter.duplicates.length;
+    updateJob(job.id, { stats: { ...job.stats } });
+
+    const businessesWithDomains = domainFilter.fresh.filter((b) => b.domain);
     logger.info('Businesses with domains', {
-      total: withDomains.length,
+      total: domainFilter.fresh.length,
       withDomain: businessesWithDomains.length,
     });
 

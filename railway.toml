@@ -1,0 +1,27 @@
+# Railway deployment config.
+#
+# Build: reuses the existing Dockerfile (node:20-slim base, npm ci,
+# CMD node index.js). Same image used for Cloud Run.
+# Run:   listens on $PORT (Railway injects this); falls back to 8080.
+#
+# Required env vars (set via `railway variables set` or the dashboard):
+#   BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID
+#   APOLLO_API_KEY, PERPLEXITY_API_KEY, OPENAI_API_KEY
+#   INSTANTLY_API_KEY, INSTANTLY_CAMPAIGN_ID
+#   GCS_BUCKET (optional; falls back to local file write on upload failure)
+#   SLACK_WEBHOOK_URL (optional)
+#
+# The pipeline writes SQLite databases and CSV outputs to ./output/.
+# Railway's filesystem is ephemeral on redeploy — for durable state,
+# attach a volume at /app/output or rely on the GCS upload step.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node index.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

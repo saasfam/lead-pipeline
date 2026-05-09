@@ -70,7 +70,8 @@ Default port: `8080` (override with `PORT`).
 | `POST` | `/scrape-all` | `{ cities? }` | Run all 22 verticals sequentially |
 | `POST` | `/enrich-domains` | `{ domains[], vertical }` | Apollo people search for a list of domains |
 | `GET`  | `/status/:jobId` | — | Inspect a job |
-| `GET`  | `/jobs` | — | List all jobs (in-memory, lost on restart) |
+| `GET`  | `/jobs` | — | List all jobs (newest first, Postgres-backed) |
+| `GET`  | `/dedup-stats?vertical=` | — | Cross-vertical dedup ledger stats; reports backend, total, byKeyType, byVertical |
 
 ### Scripts
 
@@ -100,17 +101,27 @@ Useful one-off scripts in `scripts/`:
 
 ### Cross-vertical dedup
 
-`enrichment/cross-vertical-dedup.js` is a SQLite-backed ledger
-(`output/dedup-ledger.db`) keyed on `domain:` (preferred) or `name:`
-(fallback). Every business that any vertical claims first is recorded;
-later runs across other verticals filter against it so the same company
-isn't pursued from MSP, SaaS, and technology campaigns as if it were
-three different leads.
+`enrichment/cross-vertical-dedup.js` is a dual-driver ledger keyed on
+`domain:` (preferred) or `name:` (fallback). Every business that any
+vertical claims first is recorded; later runs across other verticals
+filter against it so the same company isn't pursued from MSP, SaaS, and
+technology campaigns as if it were three different leads.
+
+- **Postgres** when `DATABASE_URL` is set (Railway, Cloud SQL on Cloud
+  Run, etc.) — state persists across redeploys.
+- **SQLite** at `output/dedup-ledger.db` when no `DATABASE_URL` — for
+  local scripts and dev.
 
 The orchestrator runs two passes — once before domain resolution
 (name-based, cheap) and once after (domain-based, catches cross-directory
 spelling variants). Job stats expose `crossVerticalDupesByName` and
 `crossVerticalDupesByDomain` for monitoring.
+
+### Job tracker
+
+`pipeline/job-tracker.js` uses the same dual-driver pattern. Postgres
+when `DATABASE_URL` is set, SQLite at `output/jobs.db` otherwise. Job
+history survives server restarts on Railway / Cloud Run.
 
 ## Data outputs
 
@@ -128,9 +139,10 @@ Generated under `./output/` (gitignored):
 npm test
 ```
 
-21 cases via `node:test` covering the cross-vertical dedup ledger.
-Tests use an in-memory SQLite DB so they don't touch
-`output/dedup-ledger.db`.
+35 cases via `node:test` covering the cross-vertical dedup ledger and
+the job tracker. Tests force SQLite `:memory:` via `configureLedger`
+and `configureJobTracker` so they don't touch `output/*.db` and don't
+require a running Postgres even if `DATABASE_URL` is set.
 
 ## Deployment
 
@@ -181,7 +193,7 @@ tests/          node:test suites
 - **Nationwide pipeline is dental-only** — Layers 1 and 7 hard-code dental
   taxonomy. Generalization is a known follow-up.
 - **Attio CRM sync is a stub** (`export/attio-sync.js`).
-- **Job tracker is in-memory only** — restarting the server loses job
-  history (results are still on disk in `output/`).
+- **Job tracker is now Postgres-backed** when `DATABASE_URL` is set (was
+  in-memory; restart-survival is fixed).
 - **No retry/resume** for failed scrapes — a vertical run that crashes
   loses uncommitted progress.

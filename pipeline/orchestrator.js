@@ -30,7 +30,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
   if (!vertical) throw new Error(`Unknown vertical: ${verticalKey}`);
 
   const cities = getCities(cityNames);
-  const job = createJob('vertical', { vertical: verticalKey, cities: cities.map((c) => c.name) });
+  const job = await createJob('vertical', { vertical: verticalKey, cities: cities.map((c) => c.name) });
 
   logger.info('Pipeline started', { jobId: job.id, vertical: verticalKey, cities: cities.length });
 
@@ -39,7 +39,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     logger.info('Step 1: Scraping businesses', { vertical: verticalKey });
     const rawBusinesses = await runScrapersForVertical(vertical, verticalKey, cities);
     job.stats.scraped = rawBusinesses.length;
-    updateJob(job.id, { stats: { ...job.stats } });
+    await updateJob(job.id, { stats: { ...job.stats } });
 
     // Step 2: Dedup businesses (within this vertical's scrape)
     logger.info('Step 2: Deduplicating businesses');
@@ -50,7 +50,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     logger.info('Step 2b: Cross-vertical dedup (name)');
     const nameFilter = await filterCrossVertical(uniqueBusinesses, verticalKey);
     job.stats.crossVerticalDupesByName = nameFilter.duplicates.length;
-    updateJob(job.id, { stats: { ...job.stats } });
+    await updateJob(job.id, { stats: { ...job.stats } });
 
     // Step 3: Resolve domains
     logger.info('Step 3: Resolving domains');
@@ -63,7 +63,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     logger.info('Step 3b: Cross-vertical dedup (domain)');
     const domainFilter = await filterCrossVertical(withDomains, verticalKey);
     job.stats.crossVerticalDupesByDomain = domainFilter.duplicates.length;
-    updateJob(job.id, { stats: { ...job.stats } });
+    await updateJob(job.id, { stats: { ...job.stats } });
 
     const businessesWithDomains = domainFilter.fresh.filter((b) => b.domain);
     logger.info('Businesses with domains', {
@@ -76,13 +76,13 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     const contacts = await batchPeopleSearch(businessesWithDomains, vertical);
     const uniqueContacts = dedupContacts(contacts);
     job.stats.enriched = uniqueContacts.length;
-    updateJob(job.id, { stats: { ...job.stats } });
+    await updateJob(job.id, { stats: { ...job.stats } });
 
     // Step 5: Verify emails
     logger.info('Step 5: Verifying emails');
     const verifiedContacts = await verifyEmails(uniqueContacts);
     job.stats.verified = verifiedContacts.length;
-    updateJob(job.id, { stats: { ...job.stats } });
+    await updateJob(job.id, { stats: { ...job.stats } });
 
     // Step 6: Export CSVs
     logger.info('Step 6: Exporting CSVs');
@@ -136,7 +136,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
         job.stats.instantlyUploaded = instantlyResult.uploaded;
         job.stats.instantlyCached = instantlyResult.cached;
         job.stats.instantlyFailed = instantlyResult.failed;
-        updateJob(job.id, { stats: { ...job.stats } });
+        await updateJob(job.id, { stats: { ...job.stats } });
       } catch (err) {
         logger.warn('Instantly upload failed, CSVs still available', { error: err.message });
       }
@@ -150,7 +150,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     }
     await notifySlack(`Lead pipeline complete: ${vertical.label}`, blocks);
 
-    completeJob(job.id, job.stats, gcsUris);
+    await completeJob(job.id, job.stats, gcsUris);
 
     logger.info('Pipeline complete', {
       jobId: job.id,
@@ -165,7 +165,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
       vertical: verticalKey,
       error: err.message,
     });
-    failJob(job.id, err.message);
+    await failJob(job.id, err.message);
     throw err;
   }
 }
@@ -179,7 +179,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
 export async function runAllVerticalsPipeline(cityNames = null) {
   const verticals = Object.entries(VERTICALS).map(([key, v]) => ({ key, ...v }));
 
-  const job = createJob('all', { verticals: verticals.map((v) => v.key) });
+  const job = await createJob('all', { verticals: verticals.map((v) => v.key) });
 
   logger.info('All-verticals pipeline started', { jobId: job.id, verticals: verticals.length });
 
@@ -209,7 +209,7 @@ export async function runAllVerticalsPipeline(cityNames = null) {
     { scraped: 0, enriched: 0, verified: 0, exported: 0 }
   );
 
-  completeJob(job.id, totalStats);
+  await completeJob(job.id, totalStats);
   logger.info('All-verticals pipeline complete', { jobId: job.id, stats: totalStats });
 
   return job;

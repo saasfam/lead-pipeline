@@ -29,33 +29,19 @@ app.post('/scrape-vertical', (req, res) => {
     return res.status(400).json({ error: `Unknown vertical: ${vertical}` });
   }
 
-  // Start pipeline in background (202 pattern)
-  const jobPromise = runVerticalPipeline(vertical, cities || null);
-
-  // Wait briefly to get the job ID from the tracker
-  jobPromise.catch((err) => {
+  // Start pipeline in background (202 pattern). Errors are caught and
+  // recorded on the job row by the orchestrator's failJob call; we still
+  // log here so unhandled rejections never bubble to the process.
+  runVerticalPipeline(vertical, cities || null).catch((err) => {
     logger.error('Background vertical pipeline failed', {
       vertical,
       error: err.message,
     });
   });
 
-  // Return 202 immediately — job ID will be available from /status
-  // We need a slight delay to let createJob() run
-  setTimeout(() => {
-    const jobs = listJobs();
-    const latestJob = jobs.find(
-      (j) => j.type === 'vertical' && j.params.vertical === vertical && j.status === 'running'
-    );
-    // Response may have already been sent; this is fire-and-forget logging
-    if (latestJob) {
-      logger.info('Job started', { jobId: latestJob.id });
-    }
-  }, 100);
-
   res.status(202).json({
     message: `Pipeline started for vertical: ${vertical}`,
-    note: 'Use GET /status to check job progress. Jobs are listed at GET /jobs.',
+    note: 'Use GET /jobs to find the running job ID, then GET /status/:jobId for progress.',
   });
 });
 
@@ -101,17 +87,26 @@ app.post('/enrich-domains', async (req, res) => {
 });
 
 // Job status
-app.get('/status/:jobId', (req, res) => {
-  const job = getJob(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
+app.get('/status/:jobId', async (req, res) => {
+  try {
+    const job = await getJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json(job);
 });
 
 // List all jobs
-app.get('/jobs', (req, res) => {
-  res.json(listJobs());
+app.get('/jobs', async (req, res) => {
+  try {
+    const jobs = await listJobs();
+    res.json(jobs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Cross-vertical dedup stats. Read-only admin endpoint; also forces lazy

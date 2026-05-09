@@ -48,7 +48,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     // Step 2b: Cross-vertical dedup by normalized name (cheap, before
     // we spend domain-resolution API calls on already-claimed businesses).
     logger.info('Step 2b: Cross-vertical dedup (name)');
-    const nameFilter = filterCrossVertical(uniqueBusinesses, verticalKey);
+    const nameFilter = await filterCrossVertical(uniqueBusinesses, verticalKey);
     job.stats.crossVerticalDupesByName = nameFilter.duplicates.length;
     updateJob(job.id, { stats: { ...job.stats } });
 
@@ -61,7 +61,7 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     // recorded name-keyed entries, but a domain-keyed entry is a stronger
     // claim, so we re-check post-domain.
     logger.info('Step 3b: Cross-vertical dedup (domain)');
-    const domainFilter = filterCrossVertical(withDomains, verticalKey);
+    const domainFilter = await filterCrossVertical(withDomains, verticalKey);
     job.stats.crossVerticalDupesByDomain = domainFilter.duplicates.length;
     updateJob(job.id, { stats: { ...job.stats } });
 

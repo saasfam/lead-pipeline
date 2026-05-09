@@ -3,6 +3,7 @@ import { runVerticalPipeline, runAllVerticalsPipeline } from './pipeline/orchest
 import { batchPeopleSearch } from './enrichment/apollo-people-search.js';
 import { getVertical } from './config/verticals.js';
 import { getJob, listJobs } from './pipeline/job-tracker.js';
+import { getDedupStats, getLedger } from './enrichment/cross-vertical-dedup.js';
 import { logger } from './services/logger.js';
 
 const app = express();
@@ -111,6 +112,20 @@ app.get('/status/:jobId', (req, res) => {
 // List all jobs
 app.get('/jobs', (req, res) => {
   res.json(listJobs());
+});
+
+// Cross-vertical dedup stats. Read-only admin endpoint; also forces lazy
+// ledger init so the backing table is created on demand without needing
+// to run a full vertical pipeline first.
+app.get('/dedup-stats', async (req, res) => {
+  try {
+    const driver = await getLedger();
+    const stats = await getDedupStats(req.query.vertical || null);
+    res.json({ backend: driver.type, ...stats });
+  } catch (err) {
+    logger.error('dedup-stats failed', { error: err.message });
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.listen(PORT, () => {

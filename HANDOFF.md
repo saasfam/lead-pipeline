@@ -36,7 +36,7 @@ Plus a new `HANDOFF.md` (this file).
 
 | Resource | Value |
 |----------|-------|
-| **GitHub** | `saasfam/lead-pipeline` — `master` is the live branch |
+| **GitHub** | `anyreachai/lead-pipeline` — `master` is the live branch (originally created at `saasfam/lead-pipeline`, duplicated to the org on 2026-05-10; `saasfam` copy is now stale) |
 | **Local clone** | `C:\Users\Lin Richard\lead-pipeline\` |
 | **Railway project** | `lead-pipeline` · id `6178dd87-797d-4af8-8edb-0a165521c3d6` · workspace `saasfam's Projects` |
 | **Railway app service** | `lead-pipeline` · id `f177131d-dbbe-4e40-a4d4-c934023bb56b` |
@@ -114,7 +114,7 @@ Tables both use `INSERT … ON CONFLICT DO NOTHING` (Postgres) and `INSERT OR IG
 ## 5. Day-one setup
 
 ```bash
-git clone git@github.com:saasfam/lead-pipeline.git
+git clone git@github.com:anyreachai/lead-pipeline.git
 cd lead-pipeline
 npm install
 # If your local Node isn't 20.x, fix the better-sqlite3 native bindings:

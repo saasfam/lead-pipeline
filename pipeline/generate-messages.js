@@ -1,4 +1,4 @@
-import { searchCompanySignals } from '../enrichment/perplexity-signals.js';
+import { getSignals } from '../enrichment/signals.js';
 import { generateSequence } from '../enrichment/openai-messages.js';
 import { assignVariety } from '../config/message-variety.js';
 import { landingPageFor } from '../config/verticals.js';
@@ -72,10 +72,18 @@ export async function generateMessagesForContacts(contacts, vertical, verticalKe
       batch.map(async (domain) => {
         const sample = byDomain.get(domain)[0];
         try {
-          const signals = await searchCompanySignals(domain, sample.companyName || '');
+          // sample carries Apollo org fields (companyIndustry, companyFounded,
+          // latestFundingStage, …) which the default apollo-website signals
+          // provider uses to skip the Perplexity call entirely.
+          const signals = await getSignals(
+            domain,
+            sample.companyName || '',
+            sample,
+            vertical.label
+          );
           signalsByDomain.set(domain, signals);
         } catch (err) {
-          logger.warn('Perplexity signals failed', { domain, error: err.message });
+          logger.warn('Signals lookup failed', { domain, error: err.message });
           signalsByDomain.set(domain, {});
         }
       })

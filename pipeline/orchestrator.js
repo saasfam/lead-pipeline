@@ -2,7 +2,7 @@ import { getVertical, VERTICALS, landingPageFor } from '../config/verticals.js';
 import { getCities } from '../config/cities.js';
 import { runScrapersForVertical } from '../scrapers/scraper-registry.js';
 import { resolveDomains } from '../enrichment/domain-resolver.js';
-import { batchPeopleSearch } from '../enrichment/apollo-people-search.js';
+import { batchPeopleSearch } from '../enrichment/people-search.js';
 import { verifyEmails } from '../enrichment/email-verify.js';
 import { dedupBusinesses, dedupContacts } from '../enrichment/dedup.js';
 import { filterCrossVertical } from '../enrichment/cross-vertical-dedup.js';
@@ -73,9 +73,10 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
       withDomain: businessesWithDomains.length,
     });
 
-    // Step 4: Apollo people search
-    logger.info('Step 4: Apollo people search');
-    const contacts = await batchPeopleSearch(businessesWithDomains, vertical);
+    // Step 4: People search (Apollo by default, or Hunter waterfall when
+    // PEOPLE_SEARCH_PROVIDER is set to hunter / hunter-then-apollo / auto).
+    logger.info('Step 4: People search');
+    const contacts = await batchPeopleSearch(businessesWithDomains, vertical, verticalKey);
     const uniqueContacts = dedupContacts(contacts);
     job.stats.enriched = uniqueContacts.length;
     await updateJob(job.id, { stats: { ...job.stats } });

@@ -297,6 +297,51 @@ The swap is an env-var change, not a code change:
 11 new tests cover result-code mapping, provider dispatch, network failure,
 and the catch-all opt-in. Total 64, all passing.
 
+## 10d. Pluggable people search + signals (2026-05-11, follow-up)
+
+Two more cost-reduction levers, same pluggable pattern as the verify swap.
+
+**People search waterfall:**
+- `enrichment/people-search.js` — dispatcher: apollo (default) | hunter |
+  hunter-then-apollo | auto.
+- `enrichment/people-search/hunter.js` — Hunter v2 domain-search client.
+  Post-hoc title filter via `buildTitleFilter()` to approximate Apollo's
+  server-side title matching.
+- `pipeline/orchestrator.js` now imports from the dispatcher.
+- `apollo-people-search.js` extended to capture org-level fields (founded,
+  industry, employees, funding stage/date/amount, revenue, keywords) that
+  it previously discarded — feeds the signals layer.
+- `PEOPLE_SEARCH_PROVIDER=auto` recommended for full-target runs:
+  SMB verticals → `hunter-then-apollo`, mid-market → `apollo`. SMB list
+  hardcoded in `HUNTER_SAFE_VERTICALS`.
+- Each contact tagged with `peopleSearchProvider` for A/B analysis.
+
+**Signals replacement (Perplexity → Apollo + website):**
+- `enrichment/signals-from-apollo.js` — pure synth of the
+  Perplexity-shaped object from Apollo org fields. No network. Includes
+  18-month recency filter on funding signals.
+- `enrichment/signals-from-extraction.js` — augments with a website scrape
+  (existing `website-scraper.js`) and LLM extraction (existing
+  `website-extractor.js`, dynamic-imported so tests don't need
+  OPENAI_API_KEY at module load).
+- `enrichment/signals.js` — dispatcher: apollo-website (default) |
+  apollo-only | perplexity.
+- `pipeline/generate-messages.js` now imports from the dispatcher.
+
+New env vars:
+- `PEOPLE_SEARCH_PROVIDER`, `HUNTER_API_KEY`
+- `SIGNALS_PROVIDER`
+
+17 new tests across `tests/signals-from-extraction.test.js` (6) and
+`tests/people-search-waterfall.test.js` (11). Total now 81, all passing.
+
+Cumulative cost impact on the 220K-lead full-target audit:
+  Pre-this-week:                $21,150
+  After verify swap:            $13,450  (saved $7,700)
+  After signals replacement:    $12,900  (saved another $550)
+  After people-search waterfall: ~$10,700 (saved another ~$2,200)
+Total savings since May 11:    ~$10,450  (~50% reduction).
+
 ---
 
 ## 11. Gotchas

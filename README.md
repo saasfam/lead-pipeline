@@ -54,6 +54,17 @@ EMAIL_VERIFY_PROVIDER=apollo                     # apollo (default) | millionver
 MILLIONVERIFIER_API_KEY=                         # required when EMAIL_VERIFY_PROVIDER=millionverifier
 MILLIONVERIFIER_INCLUDE_CATCHALL=false           # set true to accept catch_all results as deliverable (higher bounce risk)
 
+# People search provider (Apollo ~$0.04/contact, Hunter ~$0.01/domain).
+# "auto" routes SMB verticals to hunter-then-apollo waterfall and keeps
+# mid-market verticals on Apollo. Saves ~$2K on a full 220K-lead run.
+PEOPLE_SEARCH_PROVIDER=apollo                    # apollo | hunter | hunter-then-apollo | auto
+HUNTER_API_KEY=                                  # required for any non-apollo value
+
+# Signals provider — replaces Perplexity (~$0.005/req) with Apollo org fields
+# + a website scrape (~$0.001 per domain via existing website-extractor).
+# Saves ~$550 on a full 220K-lead run and removes the Perplexity dep.
+SIGNALS_PROVIDER=apollo-website                  # apollo-website (default) | apollo-only | perplexity
+
 # Optional — pipeline behavior knobs
 INSTANTLY_CAMPAIGN_ID=...                        # override per-vertical campaign provisioning with a single fixed ID
 INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL=500   # used to size warmed-account assignment and inbox order plans (per vertical)
@@ -154,6 +165,38 @@ a target daily volume, then computes an order plan against
 Slack-able; the actual order POST is gated behind two env vars
 (`INSTANTLY_AUTO_ORDER=true` AND `INSTANTLY_MAX_MAILBOXES_PER_RUN > 0`) and
 has a hard internal ceiling of 500 mailboxes per run regardless of env config.
+
+### Pluggable people search
+
+`enrichment/people-search.js` dispatches between Apollo (the original) and
+Hunter.io. Hunter is cheaper (~$0.01/domain vs Apollo's ~$0.04/contact)
+but has weaker title disambiguation at senior/executive levels, so it's
+not a drop-in for every vertical.
+
+| Provider | When to use |
+|---|---|
+| `apollo` (default) | Unchanged behavior. Best title accuracy. |
+| `hunter` | Pure cost play — Hunter for everything. Risk: 20-30% coverage hit on mid-market titles. |
+| `hunter-then-apollo` | Per-domain waterfall. Try Hunter; fall back to Apollo when Hunter returns <2 contacts. |
+| `auto` | SMB verticals → `hunter-then-apollo`, mid-market verticals → `apollo`. This is the recommended setting for cost-efficient full-target runs. Routing list lives in `HUNTER_SAFE_VERTICALS` inside `enrichment/people-search.js`. |
+
+Each returned contact is tagged with `peopleSearchProvider` so you can A/B
+reply rates between Hunter-sourced and Apollo-sourced cohorts after a run.
+
+### Pluggable signals (Perplexity replacement)
+
+`enrichment/signals.js` decouples message-generation signals from any single
+provider. The default `apollo-website` mode synthesizes the Perplexity-shaped
+output from Apollo's org-level enrichment fields (which `apollo-people-search.js`
+now captures and propagates) plus a single website scrape via the existing
+`website-extractor.js` (gpt-4o-mini). Total cost ~$0.001/domain vs
+Perplexity's ~$0.005.
+
+| Provider | Behavior |
+|---|---|
+| `apollo-website` (default) | Apollo fields + LLM extraction of company description and specialties from the website. |
+| `apollo-only` | Apollo fields only — no website scrape. Cheapest. Hooks degrade when Apollo `short_description` is empty. |
+| `perplexity` | Legacy path. Kept for A/B comparison; not used by default. |
 
 ### Pluggable email verification
 

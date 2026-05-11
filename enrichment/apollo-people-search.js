@@ -43,17 +43,33 @@ export async function searchPeopleByDomain(domain, verticalConfig) {
     const data = await res.json();
     const people = data.people || [];
 
-    return people.map((p) => ({
-      firstName: p.first_name || '',
-      lastName: p.last_name || '',
-      email: p.email || null,
-      title: p.title || '',
-      linkedinUrl: p.linkedin_url || null,
-      phone: p.phone_numbers?.[0]?.sanitized_number || null,
-      companyName: p.organization?.name || '',
-      companyDomain: domain,
-      apolloId: p.id,
-    }));
+    return people.map((p) => {
+      const org = p.organization || {};
+      return {
+        firstName: p.first_name || '',
+        lastName: p.last_name || '',
+        email: p.email || null,
+        title: p.title || '',
+        linkedinUrl: p.linkedin_url || null,
+        phone: p.phone_numbers?.[0]?.sanitized_number || null,
+        companyName: org.name || '',
+        companyDomain: domain,
+        apolloId: p.id,
+        // Org-level enrichment we used to throw away. The signals layer can
+        // now compose recentFunding / growthSignal directly from these
+        // fields without needing a separate Perplexity call.
+        companyIndustry: org.industry || '',
+        companyEmployees: org.estimated_num_employees ?? null,
+        companyFounded: org.founded_year ?? null,
+        companyRevenue: org.organization_revenue_printed || org.annual_revenue_printed || '',
+        companyLinkedin: org.linkedin_url || '',
+        companyDescription: org.short_description || '',
+        latestFundingStage: org.latest_funding_stage || '',
+        latestFundingDate: org.latest_funding_round_date || '',
+        latestFundingAmount: org.total_funding_printed || '',
+        companyKeywords: Array.isArray(org.keywords) ? org.keywords.slice(0, 10) : [],
+      };
+    });
   } catch (err) {
     logger.error('Apollo people search error', {
       domain,

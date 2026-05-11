@@ -75,11 +75,14 @@ export function planInboxOrder(capacityReport, prewarmedDomains, options = {}) {
     };
   }
 
-  // Fan out across domains so we don't hammer one domain with the whole order.
+  // Fan out across domains so we don't hammer one domain with the whole
+  // order. Round-robin in chunks of mailboxesPerDomain until we've allocated
+  // mailboxesPlanned. The 10000-iteration ceiling is a safety net against
+  // pathological inputs; in practice we exit on `remaining === 0`.
   const items = [];
   let remaining = mailboxesPlanned;
   let i = 0;
-  while (remaining > 0 && i < usable.length * 3) {
+  while (remaining > 0 && i < 10000) {
     const domain = usable[i % usable.length].domain;
     const take = Math.min(mailboxesPerDomain, remaining);
     const existing = items.find((it) => it.domain === domain);
@@ -92,14 +95,18 @@ export function planInboxOrder(capacityReport, prewarmedDomains, options = {}) {
     i++;
   }
 
+  // Truth-source: the actual sum of items is what we'd order. If the loop
+  // bailed early, mailboxesPlanned reflects reality (not the pre-loop intent).
+  const allocated = items.reduce((s, it) => s + it.num_accounts, 0);
+
   return {
     mailboxesNeeded,
-    mailboxesPlanned,
+    mailboxesPlanned: allocated,
     domains: items.map((it) => it.domain),
     items,
-    reason: mailboxesPlanned < mailboxesNeeded
-      ? `Cap-limited: planned ${mailboxesPlanned} of ${mailboxesNeeded} needed.`
-      : `Planned ${mailboxesPlanned} mailboxes to fully close deficit.`,
+    reason: allocated < mailboxesNeeded
+      ? `Cap-limited: planned ${allocated} of ${mailboxesNeeded} needed.`
+      : `Planned ${allocated} mailboxes to fully close deficit.`,
   };
 }
 

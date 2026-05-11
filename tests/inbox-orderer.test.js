@@ -78,3 +78,26 @@ test('plan respects ABSOLUTE_HARD_CAP (500)', () => {
   const plan = planInboxOrder(hugeDeficit, PREWARMED, { maxMailboxes: 99999 });
   assert.ok(plan.mailboxesPlanned <= 500, `planned=${plan.mailboxesPlanned}`);
 });
+
+test('plan items sum equals mailboxesPlanned (no double-counting)', () => {
+  // Regression for a bug surfaced by scripts/dry-run.js scenario D:
+  // with few domains and a high cap, the iteration limit truncated items
+  // but the scalar mailboxesPlanned still reported the pre-loop intent.
+  const hugeDeficit = { ...DEFICIT_300, deficit: 1000000 };
+  const plan = planInboxOrder(hugeDeficit, PREWARMED, { maxMailboxes: 99999 });
+  const sum = plan.items.reduce((s, it) => s + it.num_accounts, 0);
+  assert.equal(sum, plan.mailboxesPlanned, 'items must sum to mailboxesPlanned');
+});
+
+test('plan fills mailboxesPlanned even with few domains', () => {
+  const deficit = { ...DEFICIT_300, deficit: 3000 }; // 100 mailboxes needed
+  const plan = planInboxOrder(deficit, [{ domain: 'only.com', available: true }], {
+    maxMailboxes: 100,
+    mailboxesPerDomain: 10,
+  });
+  // Even with a single domain, we should plan all 100 against it
+  // (the round-robin folds them onto the same item).
+  assert.equal(plan.mailboxesPlanned, 100);
+  assert.equal(plan.items.length, 1);
+  assert.equal(plan.items[0].num_accounts, 100);
+});

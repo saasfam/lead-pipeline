@@ -11,9 +11,12 @@
  * inbox-order math before turning on INSTANTLY_AUTO_ORDER.
  */
 
+import { readFileSync } from 'fs';
 import { VERTICALS, landingPageFor, landingHost, getVertical } from '../config/verticals.js';
 import { CTA_POOL, assignVariety } from '../config/message-variety.js';
 import { buildCampaignBody } from '../export/instantly-campaign.js';
+import { generateInstantlyCSV } from '../export/instantly-csv.js';
+import { generatePhantomBusterCSV } from '../export/phantombuster-csv.js';
 import { planInboxOrder } from '../services/inbox-orderer.js';
 import { ensureLanderUrl } from '../enrichment/lander-url.js';
 
@@ -146,8 +149,116 @@ for (const sc of scenarios) {
   }
 }
 
-// ── 7. Summary ──────────────────────────────────────────────────────────────
-header('7. WHAT A REAL RUN LOOKS LIKE');
+// ── 7. Sample Instantly + PhantomBuster CSVs ────────────────────────────────
+header(`7. SAMPLE CSV OUTPUT (./output/*-${focusVertical}-instantly.csv)`);
+console.log(`
+  Writing a sample CSV using fabricated leads — same shape the real
+  pipeline writes after Step 5c (sequence generation) + Step 6 (export).
+  No external API calls. Safe to delete after inspection.
+`);
+
+const sampleEnrichedLeads = [
+  {
+    email: 'sarah.chen@northbridgemsp.com',
+    firstName: 'Sarah', lastName: 'Chen',
+    companyName: 'Northbridge MSP', companyDomain: 'northbridgemsp.com',
+    title: 'CEO', phone: '+1-555-0142',
+    city: 'Austin', state: 'TX',
+    linkedinUrl: 'https://linkedin.com/in/sarah-chen-msp',
+    verticalKey: focusVertical, vertical: vertical.label,
+    landingPage: url,
+    personalizedHook: 'Northbridge MSP just opened a new SOC division',
+    personalizedMessage: `Northbridge MSP's growth into managed SOC services puts you in front of the SLA-tracking challenge most MSPs hit at your size — every after-hours alert turns into either a missed callback or a tier-1 burning out at 2am. We built an AI voice agent that answers the inbound, qualifies severity, and pages the on-call only when it matters. Saw 40% fewer missed dispatches at a peer ${vertical.label} firm in their first month. Open to a 10-min call this week? Quick overview here: ${url}`,
+    sequenceStep2: `Following up — the SLA-miss problem we discussed earlier compounds at quarter-end when ticket volume jumps. The AI agent handles the surge without needing to staff up. ROI piece if useful: ${url}`,
+    sequenceStep3: `One more — a ${vertical.label} firm in the Pacific Northwest cut their after-hours dispatch cost by $11K/mo using the same setup. Happy to share the case study.`,
+    sequenceStep4: `Last note from me — if after-hours coverage isn't a priority right now, totally get it. Door's open if it becomes one. ${url}`,
+    messageFlag: 'ready',
+  },
+  {
+    email: 'm.alvarez@cresttechpartners.com',
+    firstName: 'Marcus', lastName: 'Alvarez',
+    companyName: 'Cresttech Partners', companyDomain: 'cresttechpartners.com',
+    title: 'President', phone: '+1-555-0298',
+    city: 'Phoenix', state: 'AZ',
+    linkedinUrl: 'https://linkedin.com/in/marcus-alvarez',
+    verticalKey: focusVertical, vertical: vertical.label,
+    landingPage: url,
+    personalizedHook: 'Cresttech Partners hiring 3 NOC engineers per their LinkedIn',
+    personalizedMessage: `Running President at a 75-person ${vertical.label} firm hiring NOC engineers means the question isn't whether you can grow the team — it's whether overhead keeps pace. Cresttech Partners is at the size where one missed inbound call costs more than a week of a tier-1 salary. Want me to send over a quick case study? Or skim it here: ${url}`,
+    sequenceStep2: `The NOC hiring you're doing on LinkedIn — most MSPs we work with use the AI agent to keep human engineers focused on the tickets that need them, not the password resets.`,
+    sequenceStep3: `A peer MSP in Phoenix handled a 3x call-volume spike during a vendor outage without a single dropped call. Their AI agent triaged, ours escalated only true Sev-1s.`,
+    sequenceStep4: `Closing the loop. If managed voice ever comes up at Cresttech, I'm an email away. ${url}`,
+    messageFlag: 'ready',
+  },
+  {
+    email: 'j.patel@bluepeakit.com',
+    firstName: 'Jaya', lastName: 'Patel',
+    companyName: 'Bluepeak IT', companyDomain: 'bluepeakit.com',
+    title: 'Managing Partner', phone: '',
+    city: 'Denver', state: 'CO',
+    linkedinUrl: 'https://linkedin.com/in/jaya-patel-it',
+    verticalKey: focusVertical, vertical: vertical.label,
+    landingPage: url,
+    personalizedHook: '',
+    personalizedMessage: `Bluepeak IT — quick observation. Your team's listed 24/7 response in the SLA, but 24/7 staffing is the most expensive way to deliver it. Curious how you're handling the after-hours queue — full third-shift, on-call rotation, or something else? ${url}`,
+    sequenceStep2: `Earlier note — the 24/7 SLA question. Quick stat: MSPs at your size average $7K/mo on after-hours coverage. AI voice cuts that by ~60% on the dispatch piece.`,
+    sequenceStep3: `Case in point — a Denver-area MSP cut after-hours OT spend from $14K to $5K/mo within 60 days. Different setup but transferable.`,
+    sequenceStep4: `Last note. Happy to share more anytime. ${url}`,
+    messageFlag: 'ready',
+  },
+  {
+    email: 'd.kim@parallaxmanaged.com',
+    firstName: 'David', lastName: 'Kim',
+    companyName: 'Parallax Managed Services', companyDomain: 'parallaxmanaged.com',
+    title: 'VP of Operations', phone: '+1-555-0734',
+    city: 'Seattle', state: 'WA',
+    linkedinUrl: 'https://linkedin.com/in/david-kim-msp',
+    verticalKey: focusVertical, vertical: vertical.label,
+    landingPage: url,
+    personalizedHook: 'Parallax recently launched a co-managed IT offering',
+    personalizedMessage: `Parallax Managed Services launching co-managed IT — that puts inbound complexity through the roof. Each new client adds two phone trees (theirs and yours) and the friction shows up at month 2, not month 1. Anyreach handles the routing layer so your team only sees calls that actually need them. Would a short demo make sense?`,
+    sequenceStep2: `On the co-managed launch — the routing-friction problem peaks around month 2-3 when clients start testing your after-hours response. Heads-up.`,
+    sequenceStep3: `A co-managed-focused MSP in Seattle ran the AI agent during their first 90 days post-launch — net dispatch time dropped from 9 minutes to under 2.`,
+    sequenceStep4: `Wrapping up — let me know if Q3 is the right time to revisit. ${url}`,
+    messageFlag: 'ready',
+  },
+];
+
+const csvPath = generateInstantlyCSV(sampleEnrichedLeads, focusVertical);
+const pbPath = generatePhantomBusterCSV(sampleEnrichedLeads, focusVertical);
+
+console.log(`  Instantly CSV: ${csvPath}`);
+console.log(`  PhantomBuster CSV: ${pbPath}`);
+console.log();
+console.log('  ── First lead, formatted from the CSV ───────────────────────────────');
+const csvLines = readFileSync(csvPath, 'utf-8').split(/\r?\n/);
+const headerCols = csvLines[0].split(',');
+// csv-stringify quotes fields with commas, so we re-parse minimally here
+function splitCsvRow(line) {
+  const out = [];
+  let cur = '', inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+    else if (c === '"') inQuote = !inQuote;
+    else if (c === ',' && !inQuote) { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+const firstRow = splitCsvRow(csvLines[1]);
+for (let i = 0; i < headerCols.length; i++) {
+  const val = firstRow[i] || '';
+  const truncated = val.length > 100 ? val.slice(0, 100) + '…' : val;
+  console.log(`    ${headerCols[i].padEnd(22)} ${truncated}`);
+}
+console.log();
+console.log(`  Open the file directly to see all ${sampleEnrichedLeads.length} sample rows:`);
+console.log(`    ${csvPath}`);
+
+// ── 8. Summary ──────────────────────────────────────────────────────────────
+header('8. WHAT A REAL RUN LOOKS LIKE');
 console.log(`
   POST /scrape-vertical {"vertical":"${focusVertical}","cities":["Austin"]}
 

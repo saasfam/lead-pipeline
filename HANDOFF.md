@@ -253,12 +253,28 @@ Both suites force SQLite `:memory:` via the `configure*({sqlitePath:':memory:'})
 
 ## 10. What's still open (prioritized)
 
-1. **Run more verticals** — *low effort, high value.* `dental`, `hospital`, `contactcenter` have produced output. The other 19 (automotive, logistics, propertymanagement, realestate, healthcare, recruiting, homeservices, restaurants, agencies, msp, saas, technology, ecommerce, communications, financial, education, energy, insurance, travel, retail) are configured but never executed. `POST /scrape-vertical` per vertical and let the cross-vertical dedup ledger keep them disjoint.
-2. **Retry/resume for failed scrapes** — *medium effort, high value.* Failures currently log-and-skip. A vertical run that crashes loses uncommitted progress. Wire the orchestrator to checkpoint after each step so a resume-from-step-N is possible.
-3. **Generalize the nationwide pipeline beyond dental** — *medium.* L1 (NPI taxonomy) and L7 (Google Places) need to read the vertical from a parameter rather than the hard-coded `1223*`. Useful for healthcare, financial, education, and any other vertical where licensure registries exist.
-4. **Pipeline CLI for the vertical orchestrator** — *low.* Currently REST-only. A `node scripts/run-vertical.js --vertical dental --cities Austin,SF` wrapper is a quick win.
-5. **Attio CRM sync** — *low–medium.* `export/attio-sync.js` is a placeholder; the env-vars file marks it `# Phase 4`. If Attio is still in the GTM stack, fill in the implementation against the `/v2/objects/people/records` endpoint.
-6. **Volume on `/app/output`** — *low.* Railway filesystem is ephemeral; cache files (`*-cache.json`) reset on redeploy and re-pay API costs on cold start. Lower priority because dedup ledger and jobs are now in Postgres, and CSVs go to GCS.
+1. **First end-to-end run on a fresh vertical** — `dental`, `hospital`, `contactcenter` have produced output via the old scripts. The new orchestrator path (message generation + per-vertical campaign + inbox provisioning) has tests but has not yet been run against a live vertical. Suggested smoke test: `POST /scrape-vertical {"vertical":"msp","cities":["Austin"]}` with `MESSAGES_MAX_PER_VERTICAL=20` and `INSTANTLY_AUTO_ORDER=false` — confirms scrape → enrich → Perplexity → OpenAI sequence → draft campaign creation → lead upload all the way through without spending on mailboxes.
+2. **Set the inbox-order budget knobs.** `INSTANTLY_AUTO_ORDER` and `INSTANTLY_MAX_MAILBOXES_PER_RUN` default to plan-only. Set them once Richard is comfortable that the order plans look right (visible in `/provision-inboxes` response and orchestrator job stats).
+3. **Verify per-vertical landing pages exist.** `LANDING_SLUGS` in `config/verticals.js` maps every vertical to `anyreach.ai/<slug>`. Marketing may not have shipped all 22 yet. `GET /verticals` returns the current mapping; ping for each URL and either ship the page or update the slug.
+4. **Retry/resume for failed scrapes** — *medium.* Failures currently log-and-skip. A vertical run that crashes loses uncommitted progress.
+5. **Generalize the nationwide pipeline beyond dental** — *medium.* L1 (NPI taxonomy) and L7 (Google Places) need to read the vertical from a parameter rather than the hard-coded `1223*`.
+6. **Attio CRM sync** — *low–medium.* `export/attio-sync.js` is a placeholder; the env-vars file marks it `# Phase 4`.
+7. **Volume on `/app/output`** — *low.* Railway filesystem is ephemeral; cache files reset on redeploy. Lower priority because dedup ledger and jobs are now in Postgres, and CSVs go to GCS.
+
+## 10b. New since May 9 handoff (2026-05-11)
+
+Per-vertical end-to-end is now wired in the orchestrator:
+
+| File | Purpose |
+|------|---------|
+| `pipeline/generate-messages.js` | New orchestrator step — Perplexity signals per unique domain + OpenAI 4-step sequence per contact. Attaches `personalizedMessage`, `sequenceStep2/3/4`, `messageFlag='ready'`. Without this step the orchestrator silently uploaded zero leads because `instantly-sync.js` filters on `messageFlag === 'ready'`. |
+| `export/instantly-campaign.js` | `ensureCampaignForVertical()` — idempotent per-vertical draft campaign. Reuses existing campaign by name (`Anyreach - {Label} - YYYY-MM`), else creates + attaches warmed accounts. |
+| `services/inbox-orderer.js` | `planInboxOrder()` (pure) + `provisionInboxes()`. Gated by `INSTANTLY_AUTO_ORDER` and `INSTANTLY_MAX_MAILBOXES_PER_RUN`. |
+| `enrichment/lander-url.js` | Tiny utility that re-attaches the landing URL after LLM generation. Separate from `openai-messages.js` so tests can pull it in without `OPENAI_API_KEY`. |
+| `config/verticals.js` | New `LANDING_SLUGS` map + `landingPageFor(key)` + `landingHost()`. Driven by `LANDING_PAGE_BASE` env. |
+| New endpoints in `index.js` | `POST /provision-inboxes`, `POST /provision-campaign`, `GET /verticals`. |
+| New env vars | `LANDING_PAGE_BASE`, `INSTANTLY_TARGET_DAILY_VOLUME`, `INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL`, `INSTANTLY_AUTO_ORDER`, `INSTANTLY_MAX_MAILBOXES_PER_RUN`, `MESSAGES_MAX_PER_VERTICAL`, `MESSAGES_CONCURRENCY`, `MESSAGES_ENABLED`. |
+| New tests | 16 cases across `tests/landing-page.test.js`, `tests/inbox-orderer.test.js`, `tests/instantly-campaign.test.js`. Total now 51, all passing. |
 
 ---
 

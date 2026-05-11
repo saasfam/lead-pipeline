@@ -4,12 +4,15 @@
  * Each vertical defines:
  *   - targetCount: target lead count (10K per vertical = 220K+ total)
  *   - label: display name
+ *   - landingSlug: URL path under anyreach.ai/ (resolved by landingPageFor())
  *   - searchQueries: Google Maps search terms (6-8 per vertical for volume)
  *   - apolloIndustries: Apollo industry tag keywords
  *   - apolloTitles: budget-holding decision-maker title filters only
  *   - apolloSizes: employee count ranges (Apollo format)
  *   - directories: which scrapers to use beyond Google Maps
  */
+
+const LANDING_BASE = process.env.LANDING_PAGE_BASE || 'https://anyreach.ai';
 
 export const VERTICALS = {
   contactcenter: {
@@ -421,6 +424,58 @@ export const VERTICALS = {
   },
 };
 
+// Per-vertical URL slug. Kept separate from VERTICALS so adding a new
+// vertical requires explicit slug consideration rather than auto-deriving
+// from the key (e.g. "propertymanagement" → "property-management" is not a
+// safe derivation if marketing later decides on a different path).
+const LANDING_SLUGS = {
+  contactcenter: 'contact-center',
+  dental: 'dental',
+  automotive: 'automotive',
+  logistics: 'logistics',
+  propertymanagement: 'property-management',
+  realestate: 'real-estate',
+  healthcare: 'healthcare',
+  recruiting: 'recruiting',
+  homeservices: 'home-services',
+  restaurants: 'restaurants',
+  agencies: 'agencies',
+  msp: 'msp',
+  saas: 'saas',
+  technology: 'technology',
+  ecommerce: 'ecommerce',
+  communications: 'communications',
+  financial: 'financial',
+  education: 'education',
+  energy: 'energy',
+  insurance: 'insurance',
+  travel: 'travel',
+  retail: 'retail',
+};
+
 export function getVertical(key) {
   return VERTICALS[key] || null;
+}
+
+/**
+ * Resolve the landing page URL for a vertical key.
+ * Returns the configured base + slug, e.g. https://anyreach.ai/dental.
+ * Falls back to the base URL when the vertical is unknown.
+ */
+export function landingPageFor(key) {
+  const slug = LANDING_SLUGS[key];
+  if (!slug) return LANDING_BASE;
+  return `${LANDING_BASE}/${slug}`;
+}
+
+/**
+ * The bare host of LANDING_BASE — used as Instantly's `tracking_domain`
+ * so click tracking links resolve to the same root the leads land on.
+ */
+export function landingHost() {
+  try {
+    return new URL(LANDING_BASE).host;
+  } catch {
+    return 'anyreach.ai';
+  }
 }

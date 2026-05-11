@@ -1,6 +1,7 @@
 import { stringify } from 'csv-stringify/sync';
 import { writeFileSync, mkdirSync } from 'fs';
 import { logger } from '../services/logger.js';
+import { landingPageFor } from '../config/verticals.js';
 
 const INSTANTLY_COLUMNS = [
   'email',
@@ -14,6 +15,7 @@ const INSTANTLY_COLUMNS = [
   'city',
   'state',
   'linkedin_url',
+  'landing_page',
   'personalized_hook',
   'personalized_message',
   'sequence_step_2',
@@ -44,6 +46,7 @@ export function generateInstantlyCSV(contacts, vertical, outputDir = './output')
     city: c.city || '',
     state: c.state || '',
     linkedin_url: c.linkedinUrl || '',
+    landing_page: c.landingPage || landingPageFor(vertical),
     personalized_hook: c.personalizedHook || '',
     personalized_message: c.personalizedMessage || '',
     sequence_step_2: c.sequenceStep2 || '',

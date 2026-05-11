@@ -1,4 +1,4 @@
-import { getVertical, VERTICALS } from '../config/verticals.js';
+import { getVertical, VERTICALS, landingPageFor } from '../config/verticals.js';
 import { getCities } from '../config/cities.js';
 import { runScrapersForVertical } from '../scrapers/scraper-registry.js';
 import { resolveDomains } from '../enrichment/domain-resolver.js';
@@ -10,8 +10,10 @@ import { generateInstantlyCSV } from '../export/instantly-csv.js';
 import { generatePhantomBusterCSV } from '../export/phantombuster-csv.js';
 import { uploadMultipleToGCS } from '../export/gcs-upload.js';
 import { syncLeadsToInstantly } from '../export/instantly-sync.js';
+import { ensureCampaignForVertical } from '../export/instantly-campaign.js';
 import { isConfigured as instantlyConfigured } from '../services/instantly.js';
-import { checkCapacity } from '../services/instantly-capacity.js';
+import { provisionInboxes } from '../services/inbox-orderer.js';
+import { generateMessagesForContacts } from './generate-messages.js';
 import { createJob, completeJob, failJob, updateJob } from './job-tracker.js';
 import { notifySlack, formatPipelineComplete, formatInstantlyUpload } from '../services/slack.js';
 import { logger } from '../services/logger.js';
@@ -84,20 +86,45 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     job.stats.verified = verifiedContacts.length;
     await updateJob(job.id, { stats: { ...job.stats } });
 
-    // Step 6: Export CSVs
-    logger.info('Step 6: Exporting CSVs');
-    // Merge city/state from business data into contacts
+    // Step 5b: Merge city/state from business data into contacts so the
+    // message generator and CSV exporter both see them.
     const domainToBiz = new Map();
     for (const biz of withDomains) {
       if (biz.domain && !domainToBiz.has(biz.domain)) {
         domainToBiz.set(biz.domain, biz);
       }
     }
-    const enrichedContacts = verifiedContacts.map((c) => {
+    const verifiedWithLocation = verifiedContacts.map((c) => {
       const biz = domainToBiz.get(c.companyDomain) || {};
-      return { ...c, city: biz.city || '', state: biz.state || '' };
+      return {
+        ...c,
+        city: biz.city || '',
+        state: biz.state || '',
+        vertical: vertical.label,
+        verticalKey,
+        verticalLabel: vertical.label,
+        landingPage: landingPageFor(verticalKey),
+      };
     });
 
+    // Step 5c: Generate personalized 4-step sequences. Without this step,
+    // every lead ships with messageFlag != 'ready' and instantly-sync
+    // filters it out — the previous orchestrator was silently dropping
+    // every contact at the upload step.
+    logger.info('Step 5c: Generating personalized sequences');
+    const messageResult = await generateMessagesForContacts(
+      verifiedWithLocation,
+      vertical,
+      verticalKey
+    );
+    const enrichedContacts = messageResult.leads;
+    job.stats.messagesGenerated = messageResult.stats.generated;
+    job.stats.messagesFailed = messageResult.stats.failed;
+    job.stats.messagesSkipped = messageResult.stats.skipped;
+    await updateJob(job.id, { stats: { ...job.stats } });
+
+    // Step 6: Export CSVs
+    logger.info('Step 6: Exporting CSVs');
     const instantlyPath = generateInstantlyCSV(enrichedContacts, verticalKey);
     const pbPath = generatePhantomBusterCSV(enrichedContacts, verticalKey);
     job.stats.exported = enrichedContacts.length;
@@ -113,26 +140,65 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
       gcsUris = outputFiles; // Fall back to local paths
     }
 
-    // Step 8: Upload to Instantly (non-blocking)
+    // Step 8: Provision inboxes + per-vertical campaign + upload leads.
+    //
+    // Per-vertical campaign: ensures one draft campaign per vertical per
+    //   month in Instantly (idempotent by name). Campaigns stay in draft —
+    //   Richard launches manually after review.
+    // Inbox provisioning: if MESSAGES_MAX_PER_VERTICAL leads exceed warmed
+    //   capacity, plan (and optionally order) DFY mailboxes. Order only
+    //   when INSTANTLY_AUTO_ORDER=true AND a per-run cap is set.
     let instantlyResult = null;
     let capacityReport = null;
+    let provisionResult = null;
+    let campaignProvision = null;
     if (instantlyConfigured()) {
+      // Capacity + maybe-order. Targets the per-vertical budget so we don't
+      // over-order on small verticals.
       try {
-        // Capacity check (warning only)
-        try {
-          capacityReport = await checkCapacity();
-          if (!capacityReport.isCapacitySufficient) {
-            logger.warn('Instantly capacity insufficient', {
-              dailyCapacity: capacityReport.dailyCapacity,
-              deficit: capacityReport.deficit,
-            });
-          }
-        } catch (err) {
-          logger.warn('Instantly capacity check failed', { error: err.message });
+        const target = parseInt(
+          process.env.INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL
+            || process.env.INSTANTLY_TARGET_DAILY_VOLUME
+            || '500',
+          10
+        );
+        provisionResult = await provisionInboxes({ targetDailyVolume: target });
+        capacityReport = provisionResult.capacityReport;
+        if (provisionResult.plan) {
+          job.stats.inboxesNeeded = provisionResult.plan.mailboxesNeeded;
+          job.stats.inboxesPlanned = provisionResult.plan.mailboxesPlanned;
+          job.stats.inboxOrderSubmitted = !provisionResult.dryRun;
         }
+      } catch (err) {
+        logger.warn('Inbox provisioning failed (continuing)', { error: err.message });
+      }
 
-        // Upload leads
-        instantlyResult = await syncLeadsToInstantly(enrichedContacts);
+      // Create or reuse the per-vertical campaign (draft).
+      try {
+        campaignProvision = await ensureCampaignForVertical(verticalKey, {
+          targetVolume: parseInt(
+            process.env.INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL || '500',
+            10
+          ),
+        });
+        if (campaignProvision) {
+          job.stats.campaignId = campaignProvision.campaignId;
+          job.stats.campaignName = campaignProvision.campaignName;
+          job.stats.campaignCreated = campaignProvision.created;
+        }
+      } catch (err) {
+        logger.warn('Campaign provisioning failed (continuing with env-var fallback)', {
+          error: err.message,
+        });
+      }
+
+      // Upload leads to the per-vertical campaign. instantly-sync still
+      // honors INSTANTLY_CAMPAIGN_ID as the env-var override; we pass the
+      // provisioned ID explicitly to win when both are present.
+      try {
+        instantlyResult = await syncLeadsToInstantly(enrichedContacts, {
+          campaignId: campaignProvision?.campaignId,
+        });
         job.stats.instantlyUploaded = instantlyResult.uploaded;
         job.stats.instantlyCached = instantlyResult.cached;
         job.stats.instantlyFailed = instantlyResult.failed;

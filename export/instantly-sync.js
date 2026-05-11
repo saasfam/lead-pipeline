@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createLead, listCampaigns, getCampaignById, isConfigured } from '../services/instantly.js';
+import { landingPageFor } from '../config/verticals.js';
 import { logger } from '../services/logger.js';
 
 /**
@@ -152,6 +153,7 @@ async function resolveCampaign(optionsCampaignId) {
  * Map enriched lead to Instantly lead format.
  */
 function mapLeadToInstantly(lead) {
+  const verticalKey = lead.verticalKey || lead.vertical || '';
   return {
     email: lead.email,
     first_name: lead.firstName || '',
@@ -160,6 +162,7 @@ function mapLeadToInstantly(lead) {
     custom_variables: {
       title: lead.title || '',
       vertical: lead.vertical || '',
+      landing_page: lead.landingPage || landingPageFor(verticalKey),
       personalized_hook: lead.personalizedHook || '',
       personalized_message: lead.personalizedMessage || '',
       sequence_step_2: lead.sequenceStep2 || '',

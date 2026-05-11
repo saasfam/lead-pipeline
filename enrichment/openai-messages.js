@@ -2,11 +2,15 @@ import OpenAI from 'openai';
 import { RateLimiter } from '../pipeline/rate-limiter.js';
 import { logger } from '../services/logger.js';
 import { getVerticalKpis, VERTICAL_INDUSTRY_MAP } from '../config/vertical-kpis.js';
+import { landingPageFor } from '../config/verticals.js';
+import { ensureLanderUrl } from './lander-url.js';
+
+export { ensureLanderUrl };
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// 3 requests per second (GPT-4o-mini supports 500 RPM)
-const openaiLimiter = new RateLimiter(3, 1_000);
+// 5 requests per second (GPT-4o-mini supports 500 RPM)
+const openaiLimiter = new RateLimiter(25, 1_000);
 
 const BANNED_PHRASES = [
   'laser-focused',
@@ -136,9 +140,14 @@ How Anyreach helps: ${kpiContext.anyreachValue}`;
 
   const openerInstruction = getOpenerInstruction(variety.openerType, contact, signals);
 
+  const landingUrl = contact.landingPage || landingPageFor(verticalKey);
+  const renderedCta = variety.cta
+    .replace('[vertical]', verticalLabel)
+    .replace('[lander]', landingUrl);
+
   const ctaInstruction = variety.structure.id === 3
     ? ''
-    : `\nEND with exactly this CTA: "${variety.cta.replace('[vertical]', verticalLabel)}"`;
+    : `\nEND with exactly this CTA: "${renderedCta}"`;
 
   const brandInstruction = variety.mentionBrand
     ? '\nMention "Anyreach" by name exactly once.'
@@ -509,10 +518,13 @@ export async function generateSequence(contact, signals, variety) {
     }
 
     // Process each step
+    const landingUrl = contact.landingPage || landingPageFor(contact.verticalKey);
     const step1Result = postProcessMessage(parsed.step_1 || '', contact);
+    step1Result.cleaned = ensureLanderUrl(step1Result.cleaned, landingUrl);
     const step2Result = postProcessSequenceStep(parsed.step_2 || '', 2, contact);
     const step3Result = postProcessSequenceStep(parsed.step_3 || '', 3, contact);
     const step4Result = postProcessSequenceStep(parsed.step_4 || '', 4, contact);
+    step4Result.cleaned = ensureLanderUrl(step4Result.cleaned, landingUrl);
 
     // Combine flags: step 1 flags unprefixed, steps 2-4 prefixed
     const allFlags = [
@@ -546,6 +558,39 @@ export async function generateSequence(contact, signals, variety) {
       contact: `${contact.firstName} ${contact.lastName}`,
       error: err.message,
     });
-    return { ...emptyResult, flags: ['api-error'] };
+    console.error(`[API-ERROR] ${contact.firstName} ${contact.lastName} @ ${contact.companyName}: ${err.message}`);
+    // Retry once after 2s delay
+    try {
+      await new Promise(r => setTimeout(r, 2000));
+      const retry = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 1200,
+        temperature: 0.8,
+      });
+      const retryRaw = retry.choices?.[0]?.message?.content?.trim() || '';
+      const retryParsed = JSON.parse(retryRaw);
+      const retryLandingUrl = contact.landingPage || landingPageFor(contact.verticalKey);
+      const s1 = postProcessMessage(retryParsed.step_1 || '', contact);
+      s1.cleaned = ensureLanderUrl(s1.cleaned, retryLandingUrl);
+      const s2 = postProcessSequenceStep(retryParsed.step_2 || '', 2, contact);
+      const s3 = postProcessSequenceStep(retryParsed.step_3 || '', 3, contact);
+      const s4 = postProcessSequenceStep(retryParsed.step_4 || '', 4, contact);
+      s4.cleaned = ensureLanderUrl(s4.cleaned, retryLandingUrl);
+      console.error(`[RETRY-OK] ${contact.companyName}`);
+      return {
+        message: s1.cleaned, sequenceStep2: s2.cleaned,
+        sequenceStep3: s3.cleaned, sequenceStep4: s4.cleaned,
+        flags: [...s1.flags, ...s2.flags, ...s3.flags, ...s4.flags],
+        messageStructure: variety.structure.id,
+      };
+    } catch (retryErr) {
+      console.error(`[RETRY-FAIL] ${contact.companyName}: ${retryErr.message}`);
+      return { ...emptyResult, flags: ['api-error'] };
+    }
   }
 }

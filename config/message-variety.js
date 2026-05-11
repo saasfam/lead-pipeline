@@ -17,14 +17,19 @@ export const OPENER_TYPES = [
   'question-lead',       // Open with a question about their challenge
 ];
 
+// CTAs can include two placeholders:
+//   [vertical] — replaced with the vertical label at render time
+//   [lander]   — replaced with the per-vertical landing URL at render time
+// Six of the eight CTAs route the prospect to the lander so we have a measurable
+// click-through path on every campaign without making every CTA feel identical.
 export const CTA_POOL = [
-  'Open to a 10-min call this week?',
-  'Happy to share how a similar [vertical] company handled this — want the details?',
-  'Want me to send over a quick case study?',
-  'If this is on your radar, I\'d love to walk you through it.',
+  'Open to a 10-min call this week? Quick overview here: [lander]',
+  'Happy to share how a similar [vertical] company handled this — details here: [lander]',
+  'Want me to send over a quick case study? Or skim it here: [lander]',
+  'If this is on your radar, I\'d love to walk you through it — [lander]',
   'Would a short demo make sense?',
-  'Should I send over the ROI breakdown?',
-  'Interested in seeing how this works in practice?',
+  'Should I send over the ROI breakdown? Quick overview: [lander]',
+  'Interested in seeing how this works in practice? Full picture: [lander]',
   'Worth a quick conversation?',
 ];
 

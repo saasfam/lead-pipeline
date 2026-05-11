@@ -117,3 +117,104 @@ export async function getDailyAnalytics(startDate) {
 export async function getPrewarmedDomains() {
   return instantlyFetch('/dfyemailaccountorder/prewarmedupdomainslist');
 }
+
+/**
+ * Create an Instantly campaign.
+ *
+ * Returns the created campaign object. We pass the campaign body as-is so
+ * callers can shape it (sequence steps, schedule, tracking domain, etc.).
+ * Created campaigns default to draft (status 0) — Instantly requires an
+ * explicit launch call to start sending.
+ *
+ * @param {object} campaignBody - Campaign payload
+ * @returns {object}
+ */
+export async function createCampaign(campaignBody) {
+  return instantlyFetch('/campaigns', {
+    method: 'POST',
+    body: JSON.stringify(campaignBody),
+  });
+}
+
+/**
+ * Update a campaign by ID (PATCH-style merge on Instantly's end).
+ */
+export async function updateCampaign(campaignId, patch) {
+  return instantlyFetch(`/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+/**
+ * Look up a campaign by exact name. Used to keep ensureCampaignForVertical()
+ * idempotent across runs.
+ *
+ * @param {string} name
+ * @returns {object|null}
+ */
+export async function findCampaignByName(name) {
+  let skip = 0;
+  const limit = 100;
+  // Instantly's /campaigns is paginated. Scan up to 1000 campaigns before
+  // giving up — anyone with more campaigns than that should pass an ID.
+  for (let page = 0; page < 10; page++) {
+    const batch = await instantlyFetch(`/campaigns?limit=${limit}&skip=${skip}`);
+    const items = Array.isArray(batch) ? batch : batch.items || batch.data || [];
+    if (items.length === 0) return null;
+    const hit = items.find((c) => (c.name || c.campaign_name) === name);
+    if (hit) return hit;
+    if (items.length < limit) return null;
+    skip += limit;
+  }
+  return null;
+}
+
+/**
+ * Assign email accounts to a campaign. Instantly v2 exposes this via the
+ * campaign accounts collection; the exact shape is documented inconsistently
+ * across the public docs, so we try the documented path first and fall back
+ * to a PATCH-on-campaign with the email_list field, which is the v1-style
+ * shape that most v2 deploys still accept.
+ */
+export async function assignAccountsToCampaign(campaignId, emails) {
+  if (!Array.isArray(emails) || emails.length === 0) return { assigned: 0 };
+
+  // Preferred path: PATCH /campaigns/:id with email_list. This is the field
+  // surfaced in the campaign object itself, so updating it is the most
+  // portable approach across API revisions.
+  try {
+    const res = await updateCampaign(campaignId, { email_list: emails });
+    return { assigned: emails.length, response: res };
+  } catch (err) {
+    logger.warn('PATCH email_list failed, attempting POST /campaigns/:id/accounts', {
+      campaignId,
+      error: err.message,
+    });
+  }
+
+  // Fallback: POST /campaigns/:id/accounts { emails: [...] }
+  const res = await instantlyFetch(`/campaigns/${campaignId}/accounts`, {
+    method: 'POST',
+    body: JSON.stringify({ emails }),
+  });
+  return { assigned: emails.length, response: res };
+}
+
+/**
+ * Order DFY (done-for-you) prewarmed mailboxes.
+ *
+ * The Instantly endpoint is documented as POST /dfyemailaccountorder with a
+ * payload listing the prewarmed domains and the number of accounts per
+ * domain. We never call this without an explicit safety gate — see
+ * services/inbox-orderer.js for the wrapper.
+ *
+ * @param {object} orderBody - { items: [{ domain, num_accounts }], ... }
+ * @returns {object}
+ */
+export async function orderDfyMailboxes(orderBody) {
+  return instantlyFetch('/dfyemailaccountorder', {
+    method: 'POST',
+    body: JSON.stringify(orderBody),
+  });
+}

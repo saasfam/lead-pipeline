@@ -276,6 +276,27 @@ Per-vertical end-to-end is now wired in the orchestrator:
 | New env vars | `LANDING_PAGE_BASE`, `INSTANTLY_TARGET_DAILY_VOLUME`, `INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL`, `INSTANTLY_AUTO_ORDER`, `INSTANTLY_MAX_MAILBOXES_PER_RUN`, `MESSAGES_MAX_PER_VERTICAL`, `MESSAGES_CONCURRENCY`, `MESSAGES_ENABLED`. |
 | New tests | 16 cases across `tests/landing-page.test.js`, `tests/inbox-orderer.test.js`, `tests/instantly-campaign.test.js`. Total now 51, all passing. |
 
+## 10c. Pluggable email verification (2026-05-11, follow-up)
+
+Apollo email verify is ~$0.04/email; on the 220K-lead audit that's $8,800
+(64% of API spend). MillionVerifier offers the same SMTP-level check at
+~$0.005/email — same accuracy on independent benchmarks, 8× cheaper.
+
+The swap is an env-var change, not a code change:
+
+- `enrichment/email-verify.js` — provider-agnostic wrapper. Orchestrator
+  now imports from here (`pipeline/orchestrator.js`).
+- `enrichment/verifiers/millionverifier.js` — MillionVerifier v3 client
+  with result-code mapping + 50/s rate limiter.
+- `EMAIL_VERIFY_PROVIDER=apollo` (default, behavior unchanged).
+- `EMAIL_VERIFY_PROVIDER=millionverifier` + `MILLIONVERIFIER_API_KEY=...`
+  to swap. Failure to set the key throws (no silent fallback).
+- `MILLIONVERIFIER_INCLUDE_CATCHALL=true` to treat catch-all servers as
+  deliverable (higher bounce risk).
+
+11 new tests cover result-code mapping, provider dispatch, network failure,
+and the catch-all opt-in. Total 64, all passing.
+
 ---
 
 ## 11. Gotchas

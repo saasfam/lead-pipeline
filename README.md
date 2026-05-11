@@ -48,6 +48,12 @@ INSTANTLY_API_KEY=...
 GCS_BUCKET=anyreach-lead-pipeline
 SLACK_WEBHOOK_URL=...
 
+# Email verification provider (pluggable — Apollo verify is ~$0.04/email,
+# MillionVerifier is ~$0.005/email, so swapping cuts a 220K-lead run by ~$7,700)
+EMAIL_VERIFY_PROVIDER=apollo                     # apollo (default) | millionverifier
+MILLIONVERIFIER_API_KEY=                         # required when EMAIL_VERIFY_PROVIDER=millionverifier
+MILLIONVERIFIER_INCLUDE_CATCHALL=false           # set true to accept catch_all results as deliverable (higher bounce risk)
+
 # Optional — pipeline behavior knobs
 INSTANTLY_CAMPAIGN_ID=...                        # override per-vertical campaign provisioning with a single fixed ID
 INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL=500   # used to size warmed-account assignment and inbox order plans (per vertical)
@@ -148,6 +154,21 @@ a target daily volume, then computes an order plan against
 Slack-able; the actual order POST is gated behind two env vars
 (`INSTANTLY_AUTO_ORDER=true` AND `INSTANTLY_MAX_MAILBOXES_PER_RUN > 0`) and
 has a hard internal ceiling of 500 mailboxes per run regardless of env config.
+
+### Pluggable email verification
+
+`enrichment/email-verify.js` dispatches to a provider chosen by
+`EMAIL_VERIFY_PROVIDER`. The orchestrator always calls this abstraction;
+swapping providers is an env-var change, not a code change.
+
+| Provider | Cost / verify | Notes |
+|---|---|---|
+| `apollo` (default) | ~$0.04 | Uses existing Apollo `email_verification/verify` endpoint. Same behavior as before this change. |
+| `millionverifier` | ~$0.005 | ~8× cheaper. Requires `MILLIONVERIFIER_API_KEY`. Maps `ok` → valid, `disposable` → invalid, `catch_all` → unknown (set `MILLIONVERIFIER_INCLUDE_CATCHALL=true` to accept catch-all as deliverable). |
+
+For a full 220K-lead run, swapping to MillionVerifier cuts ~$7,700 from the
+audit budget without changing any code paths downstream — the verifier
+attaches `emailVerifyProvider` to each lead for retrospective A/B analysis.
 
 ### Per-vertical Instantly campaigns
 

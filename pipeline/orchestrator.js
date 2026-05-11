@@ -3,7 +3,7 @@ import { getCities } from '../config/cities.js';
 import { runScrapersForVertical } from '../scrapers/scraper-registry.js';
 import { resolveDomains } from '../enrichment/domain-resolver.js';
 import { batchPeopleSearch } from '../enrichment/apollo-people-search.js';
-import { verifyEmails } from '../enrichment/apollo-verify.js';
+import { verifyEmails } from '../enrichment/email-verify.js';
 import { dedupBusinesses, dedupContacts } from '../enrichment/dedup.js';
 import { filterCrossVertical } from '../enrichment/cross-vertical-dedup.js';
 import { generateInstantlyCSV } from '../export/instantly-csv.js';

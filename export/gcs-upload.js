@@ -7,9 +7,19 @@ const BUCKET_NAME = process.env.GCS_BUCKET || 'anyreach-lead-pipeline';
 
 let storage = null;
 
+export function parseCredentialsEnv(raw) {
+  if (!raw) return null;
+  return JSON.parse(raw.replace(/^﻿/, '').trim());
+}
+
 function getStorage() {
   if (!storage) {
-    storage = new Storage();
+    const credentials = parseCredentialsEnv(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    if (credentials) {
+      storage = new Storage({ projectId: credentials.project_id, credentials });
+    } else {
+      storage = new Storage();
+    }
   }
   return storage;
 }

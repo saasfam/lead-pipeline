@@ -154,6 +154,7 @@ function rowToJob(row, driverType) {
     }
     return v;
   };
+  const asArray = (v) => (Array.isArray(v) ? v : []);
   return {
     id: row.id,
     type: row.type,
@@ -165,15 +166,20 @@ function rowToJob(row, driverType) {
         ? row.completed_at.toISOString()
         : row.completed_at || null,
     stats: parse(row.stats) ?? { ...DEFAULT_STATS },
-    errors: parse(row.errors) ?? [],
-    outputFiles: parse(row.output_files) ?? [],
+    errors: asArray(parse(row.errors)),
+    outputFiles: asArray(parse(row.output_files)),
   };
 }
 
 function serialize(driverType, value) {
-  if (driverType === 'sqlite') return value == null ? null : JSON.stringify(value);
-  // Postgres pg driver auto-stringifies objects passed to JSONB columns.
-  return value ?? null;
+  if (value == null) return null;
+  // SQLite stores JSON as TEXT. Postgres JSONB also accepts a JSON-string
+  // parameter — and crucially must receive one for arrays, because the
+  // node-postgres driver otherwise coerces JS arrays into the Postgres
+  // *array* type (`{}` literal), which JSONB then parses as an empty
+  // object. That confusion made `job.errors` round-trip as `{}` instead
+  // of `[]` and broke `failJob`'s spread expression downstream.
+  return JSON.stringify(value);
 }
 
 // ── Public API ───────────────────────────────────────────────────────────
@@ -211,7 +217,15 @@ export async function createJob(type, params = {}) {
     await driver.pool.query(
       `INSERT INTO jobs (id, type, params, status, started_at, stats, errors, output_files)
        VALUES ($1, $2, $3, 'running', $4, $5, $6, $7)`,
-      [id, type, params, startedAt, stats, errors, outputFiles]
+      [
+        id,
+        type,
+        serialize('pg', params),
+        startedAt,
+        serialize('pg', stats),
+        serialize('pg', errors),
+        serialize('pg', outputFiles),
+      ]
     );
   }
 
@@ -261,17 +275,17 @@ export async function updateJob(id, updates = {}) {
   if (updates.stats !== undefined) {
     fields.push('stats');
     sqliteParams.push(serialize('sqlite', updates.stats));
-    pgParams.push(updates.stats);
+    pgParams.push(serialize('pg', updates.stats));
   }
   if (updates.errors !== undefined) {
     fields.push('errors');
     sqliteParams.push(serialize('sqlite', updates.errors));
-    pgParams.push(updates.errors);
+    pgParams.push(serialize('pg', updates.errors));
   }
   if (updates.outputFiles !== undefined) {
     fields.push('output_files');
     sqliteParams.push(serialize('sqlite', updates.outputFiles));
-    pgParams.push(updates.outputFiles);
+    pgParams.push(serialize('pg', updates.outputFiles));
   }
 
   if (fields.length === 0) return getJob(id);

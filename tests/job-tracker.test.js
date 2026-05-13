@@ -123,6 +123,20 @@ describe('failJob', () => {
   it('returns null for an unknown job id', async () => {
     assert.equal(await failJob('deadbeef', 'x'), null);
   });
+
+  it('coerces a non-array errors payload back to [] (defensive)', async () => {
+    // Regression: a JSONB column on Postgres can end up holding `{}`
+    // (empty object) when the pg driver mis-coerces a JS array. After
+    // that, failJob's spread `[...(job.errors ?? []), msg]` would crash
+    // with "(...) is not iterable". rowToJob now normalises to [].
+    const job = await createJob('vertical', {});
+    await updateJob(job.id, { errors: {} });
+    const fetched = await getJob(job.id);
+    assert.deepEqual(fetched.errors, []);
+
+    const failed = await failJob(job.id, 'after malformed state');
+    assert.deepEqual(failed.errors, ['after malformed state']);
+  });
 });
 
 describe('listJobs', () => {

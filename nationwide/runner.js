@@ -2,9 +2,11 @@
  * Layer orchestrator — runs layers in order, prints gap stats between layers.
  */
 
-import { gapStats, closeDb } from './store.js';
+import { existsSync } from 'fs';
+import { gapStats, closeDb, checkpointDb, getDbPath } from './store.js';
 import { buildFilters } from './cli.js';
 import { logger } from '../services/logger.js';
+import { uploadToGCS } from '../export/gcs-upload.js';
 
 // Layer imports (lazy-loaded to avoid loading unused modules)
 const LAYER_MODULES = {
@@ -93,11 +95,53 @@ export async function runLayers(opts) {
     });
   }
 
+  // Snapshot nationwide.db to GCS for offsite durability. The volume
+  // at /app/output already covers redeploy survival; this layer adds
+  // cross-environment recovery if the volume itself is lost. Opt-out
+  // via NATIONWIDE_GCS_SNAPSHOT=false or --dry-run.
+  let snapshotUri = null;
+  if (!opts.dryRun && process.env.NATIONWIDE_GCS_SNAPSHOT !== 'false') {
+    snapshotUri = await snapshotNationwideDb();
+  }
+
   console.log('\n' + '='.repeat(64));
   console.log('  PIPELINE COMPLETE');
   console.log('='.repeat(64) + '\n');
 
-  return { skipped, failed };
+  return { skipped, failed, snapshotUri };
+}
+
+/**
+ * Checkpoint WAL into the main .db file, then upload to GCS at
+ * `snapshots/nationwide/YYYY-MM-DD/nationwide.db`. Non-fatal: any
+ * failure is logged as a warning and the run still completes.
+ */
+export async function snapshotNationwideDb() {
+  const dbPath = getDbPath();
+  if (!existsSync(dbPath)) {
+    logger.warn('Nationwide snapshot skipped: db file does not exist', { dbPath });
+    return null;
+  }
+
+  try {
+    checkpointDb();
+  } catch (err) {
+    logger.warn('Nationwide snapshot WAL checkpoint failed (continuing)', {
+      error: err.message,
+    });
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const folder = `snapshots/nationwide/${date}`;
+
+  try {
+    const uri = await uploadToGCS(dbPath, folder);
+    console.log(`\n  Nationwide DB snapshotted to ${uri}`);
+    return uri;
+  } catch (err) {
+    logger.warn('Nationwide snapshot upload failed (continuing)', { error: err.message });
+    return null;
+  }
 }
 
 /**

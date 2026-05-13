@@ -13,6 +13,7 @@ import { dirname } from 'path';
 const DEFAULT_DB_PATH = './output/nationwide.db';
 
 let _db = null;
+let _dbPath = DEFAULT_DB_PATH;
 
 /** Open (or create) the database, returning the singleton instance. */
 export function getDb(dbPath = DEFAULT_DB_PATH) {
@@ -22,6 +23,7 @@ export function getDb(dbPath = DEFAULT_DB_PATH) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   _db = new Database(dbPath);
+  _dbPath = dbPath;
   _db.pragma('journal_mode = WAL');
   _db.pragma('synchronous = NORMAL');
   _db.pragma('foreign_keys = ON');
@@ -36,6 +38,22 @@ export function closeDb() {
     _db.close();
     _db = null;
   }
+}
+
+/**
+ * Flush WAL pages into the main .db file so it is a self-contained
+ * snapshot. After this returns the .db file on disk reflects every
+ * committed write; the .db-wal and .db-shm files (if present) become
+ * empty / redundant for the purposes of copying or uploading.
+ */
+export function checkpointDb() {
+  const db = getDb();
+  db.pragma('wal_checkpoint(TRUNCATE)');
+}
+
+/** Resolve the on-disk path of the active SQLite file (for snapshots). */
+export function getDbPath() {
+  return _dbPath;
 }
 
 // ── Schema migration ────────────────────────────────────────────────────────

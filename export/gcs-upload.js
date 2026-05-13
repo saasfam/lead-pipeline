@@ -24,14 +24,33 @@ function getStorage() {
   return storage;
 }
 
+const CONTENT_TYPE_BY_EXT = {
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.db': 'application/x-sqlite3',
+  '.sqlite': 'application/x-sqlite3',
+  '.sqlite3': 'application/x-sqlite3',
+  '.gz': 'application/gzip',
+  '.zip': 'application/zip',
+};
+
+export function contentTypeFor(filePath) {
+  const lower = filePath.toLowerCase();
+  for (const [ext, type] of Object.entries(CONTENT_TYPE_BY_EXT)) {
+    if (lower.endsWith(ext)) return type;
+  }
+  return 'application/octet-stream';
+}
+
 /**
  * Upload a file to GCS.
  *
  * @param {string} localPath - Local file path
  * @param {string} gcsFolder - Folder within the bucket (e.g., "exports/2026-02-16")
+ * @param {string} [contentType] - Override the auto-detected MIME type
  * @returns {string} - GCS URI (gs://bucket/path)
  */
-export async function uploadToGCS(localPath, gcsFolder = null) {
+export async function uploadToGCS(localPath, gcsFolder = null, contentType = null) {
   const gcs = getStorage();
   const bucket = gcs.bucket(BUCKET_NAME);
 
@@ -44,7 +63,7 @@ export async function uploadToGCS(localPath, gcsFolder = null) {
     await bucket.upload(localPath, {
       destination,
       metadata: {
-        contentType: 'text/csv',
+        contentType: contentType || contentTypeFor(localPath),
       },
     });
 

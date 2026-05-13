@@ -138,7 +138,7 @@ const PG_SCHEMA = `
 
 // ── Row marshalling ──────────────────────────────────────────────────────
 
-const DEFAULT_STATS = { scraped: 0, enriched: 0, verified: 0, exported: 0 };
+const DEFAULT_STATS = { scraped: 0, enriched: 0, verified: 0, exported: 0, warnings: [] };
 
 function rowToJob(row, driverType) {
   if (!row) return null;

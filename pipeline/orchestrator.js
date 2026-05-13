@@ -15,8 +15,14 @@ import { isConfigured as instantlyConfigured } from '../services/instantly.js';
 import { provisionInboxes } from '../services/inbox-orderer.js';
 import { generateMessagesForContacts } from './generate-messages.js';
 import { createJob, completeJob, failJob, updateJob } from './job-tracker.js';
-import { notifySlack, formatPipelineComplete, formatInstantlyUpload } from '../services/slack.js';
+import { notifySlack, formatPipelineComplete, formatInstantlyUpload, formatWarnings } from '../services/slack.js';
 import { logger } from '../services/logger.js';
+
+function recordWarning(job, code, message, details = {}) {
+  if (!Array.isArray(job.stats.warnings)) job.stats.warnings = [];
+  job.stats.warnings.push({ code, message, ...details });
+  logger.warn(message, { code, jobId: job.id, ...details });
+}
 
 /**
  * Run the full pipeline for a single vertical.
@@ -137,7 +143,9 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
     try {
       gcsUris = await uploadMultipleToGCS(outputFiles);
     } catch (err) {
-      logger.warn('GCS upload failed, CSVs saved locally', { error: err.message });
+      recordWarning(job, 'gcs_upload_failed', 'GCS upload failed, CSVs saved locally', {
+        error: err.message,
+      });
       gcsUris = outputFiles; // Fall back to local paths
     }
 
@@ -171,7 +179,9 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
           job.stats.inboxOrderSubmitted = !provisionResult.dryRun;
         }
       } catch (err) {
-        logger.warn('Inbox provisioning failed (continuing)', { error: err.message });
+        recordWarning(job, 'inbox_provisioning_failed', 'Inbox provisioning failed (continuing)', {
+          error: err.message,
+        });
       }
 
       // Create or reuse the per-vertical campaign (draft).
@@ -188,9 +198,12 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
           job.stats.campaignCreated = campaignProvision.created;
         }
       } catch (err) {
-        logger.warn('Campaign provisioning failed (continuing with env-var fallback)', {
-          error: err.message,
-        });
+        recordWarning(
+          job,
+          'campaign_provisioning_failed',
+          'Campaign provisioning failed (continuing with env-var fallback)',
+          { error: err.message }
+        );
       }
 
       // Upload leads to the per-vertical campaign. instantly-sync still
@@ -205,8 +218,17 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
         job.stats.instantlyFailed = instantlyResult.failed;
         await updateJob(job.id, { stats: { ...job.stats } });
       } catch (err) {
-        logger.warn('Instantly upload failed, CSVs still available', { error: err.message });
+        recordWarning(job, 'instantly_upload_failed', 'Instantly upload failed, CSVs still available', {
+          error: err.message,
+        });
       }
+    } else {
+      recordWarning(
+        job,
+        'instantly_not_configured',
+        'Instantly upload skipped: INSTANTLY_API_KEY not set',
+        {}
+      );
     }
 
     // Step 9: Notify Slack
@@ -215,7 +237,12 @@ export async function runVerticalPipeline(verticalKey, cityNames = null) {
       blocks.push({ type: 'divider' });
       blocks.push(...formatInstantlyUpload(instantlyResult, capacityReport));
     }
-    await notifySlack(`Lead pipeline complete: ${vertical.label}`, blocks);
+    blocks.push(...formatWarnings(job.stats.warnings));
+    const warningCount = job.stats.warnings?.length || 0;
+    const slackTitle = warningCount > 0
+      ? `Lead pipeline complete: ${vertical.label} (${warningCount} warning${warningCount === 1 ? '' : 's'})`
+      : `Lead pipeline complete: ${vertical.label}`;
+    await notifySlack(slackTitle, blocks);
 
     await completeJob(job.id, job.stats, gcsUris);
 

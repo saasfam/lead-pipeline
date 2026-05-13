@@ -96,3 +96,31 @@ export function formatInstantlyUpload(uploadResult, capacityReport = null) {
 
   return blocks;
 }
+
+/**
+ * Format job.stats.warnings[] entries as Slack blocks. Used when the
+ * pipeline finished but a swallowed-error path (GCS, Instantly, inbox
+ * provisioning, campaign provisioning) fired. Returns an empty array if
+ * there are no warnings so callers can spread the result unconditionally.
+ *
+ * @param {Array<{code: string, message: string}>} warnings
+ * @returns {Array<object>} - Slack blocks (possibly empty)
+ */
+export function formatWarnings(warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) return [];
+
+  const lines = warnings
+    .map((w) => `• \`${w.code}\` — ${w.message}${w.error ? ` (${w.error})` : ''}`)
+    .join('\n');
+
+  return [
+    { type: 'divider' },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:warning: *Run Warnings (${warnings.length})*\n${lines}`,
+      },
+    },
+  ];
+}

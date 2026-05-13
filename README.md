@@ -66,6 +66,12 @@ HUNTER_API_KEY=                                  # required for any non-apollo v
 # Saves ~$550 on a full 220K-lead run and removes the Perplexity dep.
 SIGNALS_PROVIDER=apollo-website                  # apollo-website (default) | apollo-only | perplexity
 
+# Nationwide pipeline (nationwide/layers/*) — optional Google enrichment.
+# If either key is absent the corresponding layer logs a structured
+# feature_disabled warning and skips (the run still succeeds without it).
+GOOGLE_KG_API_KEY=                               # nationwide layer 4 — Google Knowledge Graph entity lookups
+GOOGLE_PLACES_API_KEY=                           # nationwide layer 7 — Google Places business details
+
 # Optional — pipeline behavior knobs
 INSTANTLY_CAMPAIGN_ID=...                        # override per-vertical campaign provisioning with a single fixed ID
 INSTANTLY_TARGET_DAILY_VOLUME_PER_VERTICAL=500   # used to size warmed-account assignment and inbox order plans (per vertical)

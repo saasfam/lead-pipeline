@@ -4,16 +4,25 @@
 # CMD node index.js). Same image used for Cloud Run.
 # Run:   listens on $PORT (Railway injects this); falls back to 8080.
 #
-# Required env vars (set via `railway variables set` or the dashboard):
+# Required env vars (set via `railway variable set` or the dashboard):
 #   BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID
 #   APOLLO_API_KEY, PERPLEXITY_API_KEY, OPENAI_API_KEY
 #   INSTANTLY_API_KEY, INSTANTLY_CAMPAIGN_ID
-#   GCS_BUCKET (optional; falls back to local file write on upload failure)
+#   GCS_BUCKET, GOOGLE_APPLICATION_CREDENTIALS_JSON (full SA key JSON)
 #   SLACK_WEBHOOK_URL (optional)
 #
-# The pipeline writes SQLite databases and CSV outputs to ./output/.
-# Railway's filesystem is ephemeral on redeploy — for durable state,
-# attach a volume at /app/output or rely on the GCS upload step.
+# Optional env vars (features auto-skip with a structured warning if absent):
+#   HUNTER_API_KEY               — Hunter people search (Apollo waterfall)
+#   MILLIONVERIFIER_API_KEY      — required when EMAIL_VERIFY_PROVIDER=millionverifier
+#   GOOGLE_KG_API_KEY            — nationwide layer 4 (Knowledge Graph)
+#   GOOGLE_PLACES_API_KEY        — nationwide layer 7 (Places)
+#
+# Persistent storage:
+# A Railway volume is attached at /app/output (lead-pipeline-volume).
+# SQLite DBs (jobs.db, dedup-ledger.db, nationwide.db) and any CSVs that
+# haven't been uploaded to GCS yet survive redeploys via this volume.
+# DATABASE_URL still routes job-tracker and cross-vertical dedup to Postgres
+# in production; SQLite under /app/output is the local-dev / fallback path.
 
 [build]
 builder = "DOCKERFILE"
